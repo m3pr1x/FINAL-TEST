@@ -13,27 +13,24 @@ import pandas as pd
 import streamlit as st
 
 # ═══════════ IMPORTS OPTIONNELS ═══════════
-# libpostal (améliore le découpage d’adresse)
-try:
-    from postal.parser import parse_address            # type: ignore
+try:                                   # libpostal
+    from postal.parser import parse_address        # type: ignore
     USE_POSTAL = True
 except ImportError:
     USE_POSTAL = False
 
-# Outlook (génération de brouillon)
-try:
-    import win32com.client as win32                    # type: ignore
+try:                                   # Outlook
+    import win32com.client as win32                # type: ignore
     IS_OUTLOOK = True
 except ImportError:
     IS_OUTLOOK = False
 
-# psutil (affiche l’usage RAM)
-try:
-    import psutil                                      # type: ignore
+try:                                   # RAM
+    import psutil                                  # type: ignore
     RAM = lambda: f"{psutil.Process().memory_info().rss/1_048_576:,.0f} Mo"
 except ModuleNotFoundError:
     psutil = None
-    RAM = lambda: "n/a"                                # type: ignore
+    RAM = lambda: "n/a"                            # type: ignore
 
 TODAY = datetime.today().strftime("%y%m%d")
 st.set_page_config("Boîte à outils", "🛠", layout="wide")
@@ -48,7 +45,8 @@ def read_csv(buf: io.BytesIO) -> pd.DataFrame:
             sample = buf.read(2048).decode(enc, errors="ignore")
             sep = csv.Sniffer().sniff(sample, delimiters=";,|\t").delimiter
             buf.seek(0)
-            return pd.read_csv(buf, sep=sep, encoding=enc, engine="python", on_bad_lines="skip")
+            return pd.read_csv(buf, sep=sep, encoding=enc, engine="python",
+                               on_bad_lines="skip", dtype=str)
         except Exception:
             continue
     raise ValueError("CSV illisible (encodage ou séparateur)")
@@ -84,15 +82,13 @@ def sanitize_numeric(series: pd.Series, width: int) -> Tuple[pd.Series, pd.Serie
 
 # ═══════════════════════════  PAGE 1 – MISE À JOUR M2 (PC & Appairage) ═══════════════════════════
 def page_update_m2() -> None:
-    """Outil unique regroupant :
-       • la mise à jour des codes M2 d’une année N‑1 ➜ N  (onglet PC)
-       • l’appairage des nouveaux M2 avec le code famille client (onglet Appairage)"""
+    """Outil unique : Mise à jour M2 + Appairage client."""
     st.header("🔄 Mise à jour des codes M2")
     tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Appairage client"])
 
-    # ▸▸▸ Onglet 1 – Mise à jour des codes M2 (PC)
+    # ▸▸▸ Onglet 1 – Mise à jour (PC)
     with tab_pc:
-        LOTS_PC: dict[str, tuple[str, str, str]] = {
+        LOTS_PC = {
             "old": ("Données N‑1", "Ref produit", "M2 ancien"),
             "new": ("Données N"  , "Ref produit", "M2 nouveau"),
         }
@@ -101,19 +97,16 @@ def page_update_m2() -> None:
         if st.button("Générer : M2_MisAJour.csv", key="btn_pc"):
             if not all(st.session_state[f"pc_{k}_files"] for k in LOTS_PC):
                 st.warning("Chargez à la fois les fichiers N‑1 **et** N."); st.stop()
-
             maj_df = _build_m2_update("pc", LOTS_PC)
-            st.download_button(
-                "⬇️ Télécharger M2_MisAJour.csv",
-                maj_df.to_csv(index=False, sep=";"),
-                file_name=f"M2_MisAJour_{TODAY}.csv",
-                mime="text/csv",
-            )
+            st.download_button("⬇️ Télécharger M2_MisAJour.csv",
+                               maj_df.to_csv(index=False, sep=";"),
+                               file_name=f"M2_MisAJour_{TODAY}.csv",
+                               mime="text/csv")
             st.dataframe(maj_df.head())
 
-    # ▸▸▸ Onglet 2 – Appairage M2 → Code famille client
+    # ▸▸▸ Onglet 2 – Appairage
     with tab_cli:
-        LOTS_CL: dict[str, tuple[str, str, str]] = {
+        LOTS_CL = {
             "old": ("Données N‑1", "Ref produit", "M2 ancien"),
             "new": ("Données N"  , "Ref produit", "M2 nouveau"),
             "map": ("Mapping"    , "M2 ancien",   "Code famille client"),
@@ -129,26 +122,39 @@ def page_update_m2() -> None:
             if not all(st.session_state[f"cl_{k}_files"] for k in LOTS_CL):
                 st.warning("Chargez les **3** jeux de données (N‑1, N, Mapping)."); st.stop()
 
-            appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
+            # Garde‑fou : indices identiques
+            if (st.session_state["cl_old_ref"] == st.session_state["cl_old_val"] or
+                st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
+                st.error("« Ref produit » et « M2 » doivent être deux colonnes différentes.")
+                st.stop()
 
-            # ▼▼ 2 fichiers : appairage complet + valeurs manquantes ▼▼
-            st.download_button(
-                "⬇️ appairage_M2_famille.csv",
-                appair_df.to_csv(index=False, sep=";"),
-                file_name=f"appairage_M2_CodeFamilleClient_{TODAY}.csv",
-                mime="text/csv",
-            )
-            st.download_button(
-                "⬇️ a_remplir.csv",
-                missing_df.to_csv(index=False, sep=";"),
-                file_name=f"a_remplir_{TODAY}.csv",
-                mime="text/csv",
-            )
+            appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
+            st.download_button("⬇️ appairage_M2_famille.csv",
+                               appair_df.to_csv(index=False, sep=";"),
+                               file_name=f"appairage_M2_CodeFamilleClient_{TODAY}.csv",
+                               mime="text/csv")
+            st.download_button("⬇️ a_remplir.csv",
+                               missing_df.to_csv(index=False, sep=";"),
+                               file_name=f"a_remplir_{TODAY}.csv",
+                               mime="text/csv")
             st.dataframe(appair_df.head())
 
-# ──────────────────────────── FONCTIONS D’AIDE (Mise à jour M2) ────────────────────────────
+# ──────────────────────────── HELPERS (Mise à jour M2) ────────────────────────────
+def _preview_file(upload) -> None:
+    """Aperçu interactif : 5 lignes + liste des colonnes."""
+    try:
+        df = read_any(upload)
+    except Exception as e:
+        st.error(f"{upload.name} – lecture impossible : {e}")
+        return
+    with st.expander(f"📄 Aperçu – {upload.name}", expanded=False):
+        st.dataframe(df.head())
+        meta = pd.DataFrame({"N°": range(1, len(df.columns)+1),
+                             "Nom de colonne": df.columns})
+        st.table(meta)
+
 def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
-    """Widget upload + mémorisation d’état pour éviter les doublons."""
+    """Widget upload + état mémoire + aperçu automatique."""
     for key in lots:
         st.session_state.setdefault(f"{prefix}_{key}_files", [])
         st.session_state.setdefault(f"{prefix}_{key}_names", [])
@@ -161,78 +167,66 @@ def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
                                        accept_multiple_files=True,
                                        key=f"{prefix}_{key}_up")
             if uploads:
-                # Ajout uniquement des nouveaux fichiers
                 new = [u for u in uploads
                        if u.name not in st.session_state[f"{prefix}_{key}_names"]]
                 st.session_state[f"{prefix}_{key}_files"] += new
                 st.session_state[f"{prefix}_{key}_names"] += [u.name for u in new]
                 st.success(f"{len(new)} fichier(s) ajouté(s)")
-            st.number_input(lab_ref, 1, 50, 1, key=f"{prefix}_{key}_ref")
-            st.number_input(lab_val, 1, 50, 2, key=f"{prefix}_{key}_val")
+                for up in new:            # ➜ aperçu instantané
+                    _preview_file(up)
+
+            st.number_input(lab_ref, 1, 50, 1,
+                            key=f"{prefix}_{key}_ref",
+                            help="Index de la colonne contenant la référence produit")
+            st.number_input(lab_val, 1, 50, 2,
+                            key=f"{prefix}_{key}_val",
+                            help="Index de la colonne contenant le code M2")
             st.caption(f"{len(st.session_state[f'{prefix}_{key}_files'])} fichier(s) • RAM {RAM()}")
 
 def _add_cols(df: pd.DataFrame, ref_i: int, m2_i: int,
               ref_label: str, m2_label: str) -> pd.DataFrame:
-    sub = df.iloc[:, [ref_i - 1, m2_i - 1]].copy()
+    sub = df.iloc[:, [ref_i-1, m2_i-1]].copy()
     sub.columns = [ref_label, m2_label]
     sub[m2_label] = to_m2(sub[m2_label])
     return sub
 
-def _build_m2_update(prefix: str,
-                     lots: dict[str, tuple[str, str, str]]) -> pd.DataFrame:
-    """Retourne le mapping M2_nouveau → M2_ancien (maj)."""
-    dfs: dict[str, pd.DataFrame] = {
-        k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
-                     ignore_index=True).drop_duplicates()
-        for k in lots
-    }
+def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.DataFrame:
+    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
+                        ignore_index=True).drop_duplicates()
+           for k in lots}
 
-    old_df = _add_cols(dfs["old"],
-                       st.session_state[f"{prefix}_old_ref"],
-                       st.session_state[f"{prefix}_old_val"],
-                       "Ref", "M2_ancien")
-    new_df = _add_cols(dfs["new"],
-                       st.session_state[f"{prefix}_new_ref"],
-                       st.session_state[f"{prefix}_new_val"],
-                       "Ref", "M2_nouveau")
+    old_df = _add_cols(dfs["old"], st.session_state[f"{prefix}_old_ref"],
+                       st.session_state[f"{prefix}_old_val"], "Ref", "M2_ancien")
+    new_df = _add_cols(dfs["new"], st.session_state[f"{prefix}_new_ref"],
+                       st.session_state[f"{prefix}_new_val"], "Ref", "M2_nouveau")
 
     merged = new_df.merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
-
     return (merged.groupby("M2_nouveau")["M2_ancien"]
                   .agg(lambda s: s.value_counts().idxmax()
                        if s.notna().any() else pd.NA)
                   ).reset_index()
 
-def _build_appairage(prefix: str,
-                     lots: dict[str, tuple[str, str, str]],
+def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
                      extra_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Construit l’appairage complet + le fichier ‘à remplir’."""
-    dfs: dict[str, pd.DataFrame] = {
-        k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
-                     ignore_index=True).drop_duplicates()
-        for k in lots
-    }
+    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
+                        ignore_index=True).drop_duplicates()
+           for k in lots}
 
-    old_df = _add_cols(dfs["old"],
-                       st.session_state[f"{prefix}_old_ref"],
+    old_df = _add_cols(dfs["old"], st.session_state[f"{prefix}_old_ref"],
                        st.session_state[f"{prefix}_old_val"],
                        "Ref", "M2_ancien")
-    new_df = _add_cols(dfs["new"],
-                       st.session_state[f"{prefix}_new_ref"],
+    new_df = _add_cols(dfs["new"], st.session_state[f"{prefix}_new_ref"],
                        st.session_state[f"{prefix}_new_val"],
                        "Ref", "M2_nouveau")
 
-    # --- mapping M2_ancien → Code famille client
-    map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"] - 1,
-                                 st.session_state[f"{prefix}_map_val"] - 1]].copy()
+    map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"]-1,
+                                 st.session_state[f"{prefix}_map_val"]-1]].copy()
     map_df.columns = ["M2_ancien", "Code_famille_Client"]
     map_df["M2_ancien"] = to_m2(map_df["M2_ancien"])
     old_df["M2_ancien"] = to_m2(old_df["M2_ancien"])
 
     merged = (new_df.merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
                      .merge(map_df, on="M2_ancien", how="left"))
-
-    # Retient la liste des colonnes dispo pour le multiselect (session_state)
     st.session_state["cl_cols"] = list(merged.columns)
 
     fam = (merged.groupby("M2_nouveau")["Code_famille_Client"]
@@ -246,8 +240,6 @@ def _build_appairage(prefix: str,
         missing = missing.merge(merged[["M2_nouveau"] + keep].drop_duplicates(),
                                 on="M2_nouveau", how="left")
     return fam, missing
-
-
 # ═══════════════════  PAGE 2 – CLASSIFICATION CODE ═══════════════════
 def page_classification():
     st.header("🧩 Classification Code")
