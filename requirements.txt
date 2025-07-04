@@ -1,0 +1,7 @@
+streamlit>=1.35
+pandas>=2.2
+openpyxl>=3.1
+psutil>=5.9
+pywin32>=306
+python-dateutil>=2.9
+postal
