@@ -255,30 +255,35 @@ def page_update_m2() -> None:
 
 # ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
 def page_classification():
-    """Classification avec saisie **numérique** de la colonne M2 (1=A)."""
+    """Classification avec index numériques pour la colonne M2 et la colonne Code famille."""
     st.header("🧩 Classification Code")
 
-    # 1) Appairage M2 → famille (obligatoire)
-    pair_file = st.file_uploader("1) Appairage M2 ➜ Code famille (CSV)", type="csv")
+    # 1) Fichier d'appairage M2 ↔ Code famille
+    pair_file = st.file_uploader("1) Appairage (CSV / Excel)", type=("csv", "xlsx", "xls"))
     if not pair_file:
-        st.info("Commence par charger l'appairage M2.")
+        st.info("Charge d’abord le fichier d’appairage.")
         st.stop()
 
-    pair_df = read_csv(io.BytesIO(pair_file.getvalue()))
-    if {"M2", "Code_famille_Client"} - set(pair_df.columns):
-        st.error("Le fichier doit contenir les colonnes « M2 » et « Code_famille_Client ».")
-        st.stop()
+    pair_df = read_any(pair_file)
+    st.dataframe(pair_df.head())
+
+    max_pair_cols = len(pair_df.columns)
+    col_idx_m2_map = st.number_input("🔢 Index colonne M2 (appairage)", 1, max_pair_cols, 1)
+    col_idx_fam_map = st.number_input("🔢 Index colonne Code famille", 1, max_pair_cols, 2)
+
+    m2_map_col  = pair_df.columns[int(col_idx_m2_map)  - 1]
+    fam_map_col = pair_df.columns[int(col_idx_fam_map) - 1]
+
+    pair_df = pair_df[[m2_map_col, fam_map_col]].rename(
+        columns={m2_map_col: "M2", fam_map_col: "Code_famille_Client"}
+    )
     pair_df["M2"] = to_m2(pair_df["M2"])
-    st.success(f"{len(pair_df)} lignes d'appairage chargées")
+    st.success(f"{len(pair_df)} lignes d’appairage prêtes")
 
     # 2) Fichiers à classifier
-    data_files = st.file_uploader(
-        "2) Fichiers à classifier (CSV / XLSX / XLS)",
-        accept_multiple_files=True,
-        type=("csv", "xlsx", "xls"),
-    )
+    data_files = st.file_uploader("2) Fichiers à classifier", type=("csv", "xlsx", "xls"),
+                                  accept_multiple_files=True)
     if not data_files:
-        st.info("Ajoute un ou plusieurs fichiers à classifier.")
         st.stop()
 
     results = []
@@ -288,33 +293,22 @@ def page_classification():
         st.dataframe(df.head())
 
         max_cols = len(df.columns)
-        col_idx = st.number_input(
-            "🔢 Index de la colonne M2 (1=A)",
-            1, max_cols, 1,
-            key=f"m2col_{upl.name}",
-        )
-        m2_col = df.columns[int(col_idx) - 1]
+        col_idx_m2 = st.number_input("Index colonne M2 (fichier)", 1, max_cols, 1, key=f"idx_{upl.name}")
+        m2_col = df.columns[int(col_idx_m2) - 1]
 
         df["M2"] = to_m2(df[m2_col])
-        merged = df.merge(pair_df[["M2", "Code_famille_Client"]], on="M2", how="left")
+        merged = df.merge(pair_df, on="M2", how="left")
         ok = merged["Code_famille_Client"].notna().sum()
-        st.write(f"→ {ok} / {len(df)} lignes appariées")
+        st.write(f"→ {ok} / {len(df)} lignes appariées")
         results.append(merged)
 
-    if not results:
-        st.warning("Aucun fichier valide.")
-        st.stop()
-
-    final = pd.concat(results, ignore_index=True)
-    fname = f"DATA_CLASSIFIEE_{datetime.today().strftime('%y%m%d_%H%M%S')}.csv"
-    st.download_button(
-        "⬇️ Télécharger les données classifiées",
-        final.to_csv(index=False, sep=";"),
-        file_name=fname,
-        mime="text/csv",
-    )
-    st.success("Classification terminée !")
-
+    if results:
+        final = pd.concat(results, ignore_index=True)
+        fname = f"DATA_CLASSIFIEE_{datetime.now():%y%m%d_%H%M%S}.csv"
+        st.download_button("⬇️ Télécharger les données classifiées",
+                           final.to_csv(index=False, sep=";"),
+                           file_name=fname, mime="text/csv")
+        st.success("Classification terminée !")
 # ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (correctif) ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
