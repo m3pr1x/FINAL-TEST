@@ -255,24 +255,28 @@ def page_update_m2() -> None:
 
 # ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
 def page_classification():
+    """Classification avec saisie **numérique** de la colonne M2 (1=A)."""
     st.header("🧩 Classification Code")
-    pair_file = st.file_uploader("1) Appairage M2 ➜ Code famille (CSV)", type="csv")
+
+    # 1) Appairage M2 → famille (obligatoire)
+    pair_file = st.file_uploader("1) Appairage M2 ➜ Code famille (CSV)", type="csv")
     if not pair_file:
         st.info("Commence par charger l'appairage M2.")
         st.stop()
 
     pair_df = read_csv(io.BytesIO(pair_file.getvalue()))
-    exp_cols = {"M2", "Code_famille_Client"}
-    if not exp_cols.issubset(pair_df.columns):
-        st.error(f"Le fichier doit contenir : {exp_cols}")
+    if {"M2", "Code_famille_Client"} - set(pair_df.columns):
+        st.error("Le fichier doit contenir les colonnes « M2 » et « Code_famille_Client ».")
         st.stop()
     pair_df["M2"] = to_m2(pair_df["M2"])
-    st.success(f"{len(pair_df)} lignes chargées")
-    st.dataframe(pair_df.head())
+    st.success(f"{len(pair_df)} lignes d'appairage chargées")
 
-    data_files = st.file_uploader("2) Fichiers à classifier (CSV/XLSX/XLS)",
-                                  accept_multiple_files=True,
-                                  type=("csv", "xlsx", "xls"))
+    # 2) Fichiers à classifier
+    data_files = st.file_uploader(
+        "2) Fichiers à classifier (CSV / XLSX / XLS)",
+        accept_multiple_files=True,
+        type=("csv", "xlsx", "xls"),
+    )
     if not data_files:
         st.info("Ajoute un ou plusieurs fichiers à classifier.")
         st.stop()
@@ -280,22 +284,35 @@ def page_classification():
     results = []
     for upl in data_files:
         df = read_any(upl)
-        st.markdown(f"##### {upl.name}")
-        cols = [f"{i+1} – {c}" for i, c in enumerate(df.columns)]
-        idx = st.selectbox("Colonne M2", cols, key=f"m2col_{upl.name}")
-        m2_col = df.columns[int(idx.split(' –')[0]) - 1]
+        st.markdown(f"#### {upl.name}")
+        st.dataframe(df.head())
+
+        max_cols = len(df.columns)
+        col_idx = st.number_input(
+            "🔢 Index de la colonne M2 (1=A)",
+            1, max_cols, 1,
+            key=f"m2col_{upl.name}",
+        )
+        m2_col = df.columns[int(col_idx) - 1]
+
         df["M2"] = to_m2(df[m2_col])
         merged = df.merge(pair_df[["M2", "Code_famille_Client"]], on="M2", how="left")
-        st.write(f"→ {merged['Code_famille_Client'].notna().sum()} / {len(df)} lignes appariées")
+        ok = merged["Code_famille_Client"].notna().sum()
+        st.write(f"→ {ok} / {len(df)} lignes appariées")
         results.append(merged)
-        with st.expander("Aperçu"):
-            st.dataframe(merged.head())
+
+    if not results:
+        st.warning("Aucun fichier valide.")
+        st.stop()
 
     final = pd.concat(results, ignore_index=True)
     fname = f"DATA_CLASSIFIEE_{datetime.today().strftime('%y%m%d_%H%M%S')}.csv"
-    st.download_button("⬇️ Télécharger les données classifiées",
-                       final.to_csv(index=False, sep=";"),
-                       file_name=fname, mime="text/csv")
+    st.download_button(
+        "⬇️ Télécharger les données classifiées",
+        final.to_csv(index=False, sep=";"),
+        file_name=fname,
+        mime="text/csv",
+    )
     st.success("Classification terminée !")
 
 # ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (correctif) ═══════════════════
