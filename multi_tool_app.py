@@ -363,5 +363,5 @@ PAGES = {
     "Générateur PC / MàJ M2": page_dfrx_pc,
     "CPN Generator": page_cpn,
 }
-choice = st.sidebar.radio("Navigation", list(PAGES.keys()))
+choice = st.sidebar.radio("Navigation", list(PAGES.keys()), key="nav_main")
 PAGES[choice]()
