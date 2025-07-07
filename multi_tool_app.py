@@ -255,60 +255,80 @@ def page_update_m2() -> None:
 
 # ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
 def page_classification():
-    """Classification avec index numériques pour la colonne M2 et la colonne Code famille."""
-    st.header("🧩 Classification Code")
+    """Nouveau workflow : génère DFRXHYBRCMR & AFRXHYBRCMR à partir d’un appairage.
+    L’utilisateur saisit :
+        • index colonne M2
+        • index colonne Code famille Client
+        • nom d’Entreprise.
+    Deux fichiers sont produits :
+        1. DFRXHYBRCMR<date>0000  (TSV, sans en‑tête)
+        2. AFRXHYBRCMR<date>0000.txt  (ACK fixe)
+    """
+    st.header("🧩 Classification Code → DFRXHYBRCMR génération")
 
-    # 1) Fichier d'appairage M2 ↔ Code famille
-    pair_file = st.file_uploader("1) Appairage (CSV / Excel)", type=("csv", "xlsx", "xls"))
+    # --------- 1) Appairage obligatoire ---------
+    pair_file = st.file_uploader("📄 Appairage (CSV / Excel)")
     if not pair_file:
-        st.info("Charge d’abord le fichier d’appairage.")
+        st.info("Charge d’abord le fichier d’appairage M2 → Code famille.")
         st.stop()
 
     pair_df = read_any(pair_file)
     st.dataframe(pair_df.head())
 
-    max_pair_cols = len(pair_df.columns)
-    col_idx_m2_map = st.number_input("🔢 Index colonne M2 (appairage)", 1, max_pair_cols, 1)
-    col_idx_fam_map = st.number_input("🔢 Index colonne Code famille", 1, max_pair_cols, 2)
+    max_cols = len(pair_df.columns)
+    idx_m2  = st.number_input("🔢 Index colonne M2", 1, max_cols, 1)
+    idx_fam = st.number_input("🔢 Index colonne Code famille", 1, max_cols, 2)
 
-    m2_map_col  = pair_df.columns[int(col_idx_m2_map)  - 1]
-    fam_map_col = pair_df.columns[int(col_idx_fam_map) - 1]
+    entreprise = st.text_input("🏢 Entreprise")
 
-    pair_df = pair_df[[m2_map_col, fam_map_col]].rename(
-        columns={m2_map_col: "M2", fam_map_col: "Code_famille_Client"}
-    )
-    pair_df["M2"] = to_m2(pair_df["M2"])
-    st.success(f"{len(pair_df)} lignes d’appairage prêtes")
+    if st.button("🚀 Générer fichiers CMR"):
+        if not entreprise:
+            st.warning("Renseigne le champ Entreprise.")
+            st.stop()
 
-    # 2) Fichiers à classifier
-    data_files = st.file_uploader("2) Fichiers à classifier", type=("csv", "xlsx", "xls"),
-                                  accept_multiple_files=True)
-    if not data_files:
-        st.stop()
+        try:
+            col_m2  = pair_df.columns[int(idx_m2)  - 1]
+            col_fam = pair_df.columns[int(idx_fam) - 1]
+        except IndexError:
+            st.error("Indice de colonne hors plage.")
+            st.stop()
 
-    results = []
-    for upl in data_files:
-        df = read_any(upl)
-        st.markdown(f"#### {upl.name}")
-        st.dataframe(df.head())
+        df_out = pair_df[[col_fam, col_m2]].rename(columns={
+            col_fam: "Code famille Client",
+            col_m2:  "M2",
+        }).copy()
 
-        max_cols = len(df.columns)
-        col_idx_m2 = st.number_input("Index colonne M2 (fichier)", 1, max_cols, 1, key=f"idx_{upl.name}")
-        m2_col = df.columns[int(col_idx_m2) - 1]
+        df_out["M2"] = df_out["M2"].apply(to_m2).apply(lambda x: f"M2_{x}")
+        df_out["onsenfou"] = None
+        df_out["Entreprises"] = entreprise
+        df_out = df_out[["Code famille Client", "onsenfou", "Entreprises", "M2"]]
 
-        df["M2"] = to_m2(df[m2_col])
-        merged = df.merge(pair_df, on="M2", how="left")
-        ok = merged["Code_famille_Client"].notna().sum()
-        st.write(f"→ {ok} / {len(df)} lignes appariées")
-        results.append(merged)
+        dstr = TODAY
+        dfrx_name = f"DFRXHYBRCMR{dstr}0000"
+        afrx_name = f"AFRXHYBRCMR{dstr}0000.txt"
 
-    if results:
-        final = pd.concat(results, ignore_index=True)
-        fname = f"DATA_CLASSIFIEE_{datetime.now():%y%m%d_%H%M%S}.csv"
-        st.download_button("⬇️ Télécharger les données classifiées",
-                           final.to_csv(index=False, sep=";"),
-                           file_name=fname, mime="text/csv")
-        st.success("Classification terminée !")
+        # — Fichier principal TSV —
+        st.download_button(
+            "📥 DFRXHYBRCMR",
+            df_out.to_csv(sep="	", index=False, header=False).encode(),
+            file_name=dfrx_name,
+            mime="text/tab-separated-values",
+        )
+
+        # — ACK —
+        ack_txt = (
+            f"DFRXHYBRCMR{dstr}000068230116IT"
+            f"DFRXHYBRCMR{dstr}RCMRHYBFRX                    OK000000"
+        )
+        st.download_button(
+            "📥 AFRXHYBRCMR",
+            ack_txt,
+            file_name=afrx_name,
+            mime="text/plain",
+        )
+
+        st.success("Fichiers CMR générés avec succès ✅") !")
+
 # ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (correctif) ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
