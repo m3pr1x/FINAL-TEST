@@ -5,7 +5,8 @@ multi_tool_app.py – Application « Boîte à outils » (Streamlit)
 Correctifs 07/2025
     • PF1→PF6 : noms explicites (plus de timestamp)
     • Générateur PC & MàJ M2 : ajout du fichier AFRXHYBRPCP<date>0000.txt
-    • Correction d’une parenthèse non fermée (section Outlook)
+    • Correction d’une parenthèse non fermée (Outlook)
+    • Clé 'nav_main' pour le menu (évite DuplicateElementId)
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def sanitize_numeric(series: pd.Series, width: int) -> Tuple[pd.Series, pd.Serie
     bad = ~s_pad.str.fullmatch(fr"\d{{{width}}}")
     return s_pad, bad
 
-# ──────────────────────────── HELPERS (Mise à jour M2) ────────────────────────────
+# ═══════════════════ PAGE 1 – MISE À JOUR M2 (PC & Appairage) ═══════════════════
 def _preview_file(upload) -> None:
     """Aperçu interactif : 5 lignes + liste des colonnes."""
     try:
@@ -96,7 +97,6 @@ def _preview_file(upload) -> None:
         meta = pd.DataFrame({"N°": range(1, len(df.columns)+1),
                              "Nom de colonne": df.columns})
         st.table(meta)
-
 
 def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
     """Widget upload + état mémoire + aperçu automatique."""
@@ -126,8 +126,7 @@ def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
             st.number_input(lab_val, 1, 50, 2,
                             key=f"{prefix}_{key}_val",
                             help="Index de la colonne contenant le code M2")
-            st.caption(f"{len(st.session_state[f'{prefix}_{key}_files'])} fichier(s) • RAM {RAM()})")
-
+            st.caption(f"{len(st.session_state[f'{prefix}_{key}_files'])} fichier(s) • RAM {RAM()}")
 
 def _add_cols(df: pd.DataFrame, ref_i: int, m2_i: int,
               ref_label: str, m2_label: str) -> pd.DataFrame:
@@ -135,7 +134,6 @@ def _add_cols(df: pd.DataFrame, ref_i: int, m2_i: int,
     sub.columns = [ref_label, m2_label]
     sub[m2_label] = to_m2(sub[m2_label])
     return sub
-
 
 def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.DataFrame:
     dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
@@ -157,7 +155,6 @@ def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.D
                   .agg(lambda s: s.value_counts().idxmax()
                        if s.notna().any() else pd.NA)
                   ).reset_index()
-
 
 def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
                      extra_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -197,8 +194,6 @@ def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
                                 on="M2_nouveau", how="left")
     return fam, missing
 
-
-# ═══════════════════ PAGE 1 – MISE À JOUR M2 (UI complète) ═══════════════════
 def page_update_m2() -> None:
     st.header("🔄 Mise à jour des codes M2")
     tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Appairage client"])
@@ -207,7 +202,7 @@ def page_update_m2() -> None:
     with tab_pc:
         LOTS_PC = {
             "old": ("Données N‑1", "Ref produit", "M2 ancien"),
-            "new": ("Données N"  , "Ref produit", "M2 nouveau"),
+            "new": ("Données N",   "Ref produit", "M2 nouveau"),
         }
         _uploader_state("pc", LOTS_PC)
 
@@ -226,8 +221,8 @@ def page_update_m2() -> None:
     with tab_cli:
         LOTS_CL = {
             "old": ("Données N‑1", "Ref produit", "M2 ancien"),
-            "new": ("Données N"  , "Ref produit", "M2 nouveau"),
-            "map": ("Mapping"    , "M2 ancien",   "Code famille client"),
+            "new": ("Données N",   "Ref produit", "M2 nouveau"),
+            "map": ("Mapping",     "M2 ancien",   "Code famille client"),
         }
         _uploader_state("cl", LOTS_CL)
 
@@ -258,8 +253,7 @@ def page_update_m2() -> None:
                                mime="text/csv")
             st.dataframe(appair_df.head())
 
-
-# ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
+# ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
 def page_classification():
     st.header("🧩 Classification Code")
     pair_file = st.file_uploader("1) Appairage M2 ➜ Code famille (CSV)", type="csv")
@@ -287,17 +281,24 @@ def page_classification():
     for upl in data_files:
         df = read_any(upl)
         st.markdown(f"##### {upl.name}")
-        cols = [f\"{i+1} – {c}\" for i, c in enumerate(df.columns)]
-        idx = st.selectbox(\"Colonne M2\", cols, key=f\"m2col_{upl.name}\")
+        cols = [f"{i+1} – {c}" for i, c in enumerate(df.columns)]
+        idx = st.selectbox("Colonne M2", cols, key=f"m2col_{upl.name}")
         m2_col = df.columns[int(idx.split(' –')[0]) - 1]
-        df[\"M2\"] = to_m2(df[m2_col])
-        merged = df.merge(pair_df[[\"M2\", \"Code_famille_Client\"]], on=\"M2\", how=\"left\")
-        st.write(f\"→ {merged['Code_famille_Client'].notna().sum()} / {len(df)} lignes appariées)
+        df["M2"] = to_m2(df[m2_col])
+        merged = df.merge(pair_df[["M2", "Code_famille_Client"]], on="M2", how="left")
+        st.write(f"→ {merged['Code_famille_Client'].notna().sum()} / {len(df)} lignes appariées")
         results.append(merged)
-        with st.expander(\"Aperçu\"):#"
+        with st.expander("Aperçu"):
+            st.dataframe(merged.head())
 
+    final = pd.concat(results, ignore_index=True)
+    fname = f"DATA_CLASSIFIEE_{datetime.today().strftime('%y%m%d_%H%M%S')}.csv"
+    st.download_button("⬇️ Télécharger les données classifiées",
+                       final.to_csv(index=False, sep=";"),
+                       file_name=fname, mime="text/csv")
+    st.success("Classification terminée !")
 
-# ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (corrigé) ═══════════════════
+# ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (correctif) ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
@@ -309,16 +310,16 @@ def build_tables(df_src: pd.DataFrame) -> List[pd.DataFrame]:
     """Placeholder : implémentez votre logique métier ici."""
     raise NotImplementedError
 
-def create_outlook_draft(attachments: List[Tuple[str, bytes]],
-                         to_: str = "", subject: str = "", body: str = ""):
+def create_outlook_draft(att: List[Tuple[str, bytes]],
+                         to_: str, subject: str) -> None:
     if not IS_OUTLOOK:
-        raise RuntimeError("Outlook COM indisponible.")
+        return
     outlook = win32.Dispatch("Outlook.Application")
-    mail = outlook.CreateItem(0)
+    mail = outlook.CreateItem(0)  # olMailItem
     mail.To = to_
     mail.Subject = subject
-    mail.Body = body or "Bonjour,\n\nVeuillez trouver les fichiers PF en pièce jointe.\n"
-    for name, data in attachments:
+    mail.Body = "Bonjour,\n\nVeuillez trouver les fichiers PF en pièce jointe.\n"
+    for name, data in att:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=name)
         tmp.write(data)
         tmp.close()
@@ -379,7 +380,7 @@ def page_multiconnexion():
             st.error("Numéro de compte ou ManagingBranch invalide(s).")
             st.stop()
 
-        tables: List[pd.DataFrame] = build_tables(df_src)  # votre logique métier
+        tables = build_tables(df_src)  # votre logique métier
 
         file_map = {
             "PF1": f"B2B Units creation_{entreprise}.xlsx",
@@ -441,10 +442,6 @@ def generator_pc():
     if not codes_file: st.stop()
     col_idx_codes = st.number_input("Colonne Codes M2 (1=A)", 1, 50, 1)
 
-    compte_file = st.file_uploader("Numéros de compte", type=("csv", "xlsx", "xls"))
-    if not compte_file: st.stop()
-    col_idx_comptes = st.number_input("Colonne comptes (1=A)", 1, 50, 1)
-
     entreprise = st.text_input("Entreprise")
     statut = st.selectbox("Statut", ["", "INCLUDE", "EXCLUDE"])
 
@@ -494,8 +491,7 @@ def page_dfrx_pc():
     nav = st.radio("Choisir l’outil", ["Générateur PC", "Mise à jour M2"], horizontal=True)
     (generator_pc if nav == "Générateur PC" else generator_maj_m2)()
 
-
-# ═══════════════════  PAGE 5 – CPN GENERATOR ═══════════════════
+# ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
 def page_cpn():
     st.header("📑 Générateur CPN (DFRXHYBCPNA / AFRXHYBCPNA)")
     colA, colB = st.columns(2)
@@ -519,8 +515,7 @@ def page_cpn():
             st.error("Réf. interne invalide (doit contenir 8 chiffres).")
             st.dataframe(series_int[invalid]); st.stop()
         series_cli = df_cli.iloc[:, 0].astype(str).str.strip()
-        pf = pd.DataFrame(product(series_int, series_cli),
-                          columns=["1", "2"])
+        pf = pd.DataFrame(product(series_int, series_cli), columns=["1", "2"])
         pf["3"] = pf["1"]
         today = TODAY
         dfrx_name = f"DFRXHYBCPNA{today}0000"
