@@ -42,7 +42,7 @@ TODAY = datetime.today().strftime("%y%m%d")
 st.set_page_config(page_title="Boîte à outils", page_icon="🛠", layout="wide")
 
 # ──────────────────────────── UTILITAIRES GLOBAUX ────────────────────────────
-@st.cache_data(show_spinner=False, hash_funcs={io.BytesIO: lambda _: None})
+
 def read_csv(buf: io.BytesIO) -> pd.DataFrame:
     """Lecture robuste CSV : détection encodage + séparateur."""
     for enc in ("utf-8", "latin1", "cp1252"):
@@ -57,7 +57,7 @@ def read_csv(buf: io.BytesIO) -> pd.DataFrame:
             continue
     raise ValueError("CSV illisible (encodage ou séparateur)")
 
-@st.cache_data(show_spinner=False, hash_funcs={io.BytesIO: lambda _: None})
+
 def read_any(upload) -> pd.DataFrame:
     """Lecture CSV ou Excel (XLSX/XLS) avec cache."""
     name = upload.name.lower()
