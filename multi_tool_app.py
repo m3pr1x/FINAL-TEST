@@ -298,7 +298,11 @@ def page_classification():
             col_m2:  "M2",
         }).copy()
 
-        df_out["M2"] = df_out["M2"].apply(to_m2).apply(lambda x: f"M2_{x}")
+        df_out["M2"] = (
+    df_out["M2"].astype(str).str.zfill(6)     # normalise en 6 chiffres
+                          .map(lambda x: f"M2_{x}")  # préfixe
+)
+
         df_out["onsenfou"] = None
         df_out["Entreprises"] = entreprise
         df_out = df_out[["Code famille Client", "onsenfou", "Entreprises", "M2"]]
