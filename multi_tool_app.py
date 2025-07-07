@@ -299,14 +299,14 @@ def page_classification():
         }).copy()
 
         # ---- contrôle & normalisation des codes M2 ----
-raw_m2 = df_out["M2"].astype(str).str.strip()
-sanitized = raw_m2.apply(sanitize_code)        # même fonction que dans PC
-invalid_mask = sanitized.isna()
+        raw_m2 = df_out["M2"].astype(str).str.strip()
+        sanitized = raw_m2.apply(sanitize_code)        # même fonction que dans PC
+        invalid_mask = sanitized.isna()
 
-if invalid_mask.any():
-    st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
-    st.dataframe(raw_m2[invalid_mask].to_frame("Code fourni"))
-    st.stop()
+        if invalid_mask.any():
+            st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
+            st.dataframe(raw_m2[invalid_mask].to_frame("Code fourni"))
+            st.stop()
 
 df_out["M2"] = sanitized.map(lambda x: f"M2_{x}")
 
