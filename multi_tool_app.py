@@ -436,26 +436,54 @@ def export_pc_files(df1: pd.DataFrame, dstr: str):
     st.download_button("⬇️ AFRXHYBRPCP", afrx_txt,
                        file_name=afrx_name, mime="text/plain")
 
+# ─────────────────────────  GÉNÉRATEUR PC (corrigé)  ─────────────────────────
 def generator_pc():
     st.subheader("Générateur PC")
 
-    # 1) Uploads + indices
-    codes_file = st.file_uploader("📄 Codes produit", type=("csv", "xlsx", "xls"))
-    col_idx_codes = st.number_input("🔢 Colonne Codes M2", 1, 50, 1) if codes_file else None
+    # 1) Chargement des fichiers ------------------------------------------------
+    codes_file = st.file_uploader(
+        "📄 Fichier des codes produit (CSV / Excel)",
+        type=("csv", "xlsx", "xls"),
+        key="pc_codes",
+    )
+    if codes_file:
+        df_codes_tmp = read_any(codes_file)
+        with st.expander("Aperçu – codes produit"):
+            st.dataframe(df_codes_tmp.head())
+            st.write("Index colonnes :", [f"{i+1} – {c}" for i, c in enumerate(df_codes_tmp.columns)])
 
-    compte_file = st.file_uploader("📄 Numéros de compte", type=("csv", "xlsx", "xls"))
-    col_idx_comptes = st.number_input("🔢 Colonne comptes (1=A)", 1, 50, 1) if compte_file else None
+    compte_file = st.file_uploader(
+        "📄 Fichier des numéros de compte (CSV / Excel)",
+        type=("csv", "xlsx", "xls"),
+        key="pc_comptes",
+    )
+    if compte_file:
+        df_comptes_tmp = read_any(compte_file)
+        with st.expander("Aperçu – numéros de compte"):
+            st.dataframe(df_comptes_tmp.head())
+            st.write("Index colonnes :", [f"{i+1} – {c}" for i, c in enumerate(df_comptes_tmp.columns)])
 
-    # 2) Paramètres
+    if not (codes_file and compte_file):
+        st.stop()
+
+    # 2) Sélection des colonnes -------------------------------------------------
+    nb_cols_codes = len(read_any(codes_file).columns)
+    nb_cols_comp  = len(read_any(compte_file).columns)
+
+    col_idx_codes = st.number_input("🔢 Colonne contenant les codes M2", 1, nb_cols_codes, 1)
+    col_idx_comptes = st.number_input("🔢 Colonne contenant les numéros de compte", 1, nb_cols_comp, 1)
+
+    # 3) Paramètres métiers -----------------------------------------------------
     entreprise = st.text_input("🏢 Entreprise")
     statut     = st.selectbox("📌 Statut", ["", "INCLUDE", "EXCLUDE"])
 
-    # 3) Action
+    # 4) Validation + action ----------------------------------------------------
     if st.button("🚀 Générer PC"):
-        if not all([codes_file, compte_file, entreprise, statut, col_idx_codes, col_idx_comptes]):
-            st.warning("Remplis tous les champs et joins les 2 fichiers.")
+        if not all([entreprise, statut]):
+            st.warning("Renseigne l’entreprise et le statut.")
             st.stop()
 
+        # Lecture définitive
         try:
             df_codes   = read_any(codes_file)
             df_comptes = read_any(compte_file)
@@ -463,23 +491,27 @@ def generator_pc():
             st.error(f"Erreur lecture : {e}")
             st.stop()
 
+        # Extraction colonnes
         try:
-            raw_codes = df_codes.iloc[:, col_idx_codes-1].dropna().astype(str).str.strip()
-            comptes   = df_comptes.iloc[:, col_idx_comptes-1].dropna().astype(str).str.strip()
+            raw_codes = df_codes.iloc[:, col_idx_codes - 1].dropna().astype(str).str.strip()
+            comptes   = df_comptes.iloc[:, col_idx_comptes - 1].dropna().astype(str).str.strip()
         except IndexError:
             st.error("Indice de colonne hors plage.")
             st.stop()
 
+        # Nettoyage + contrôle
         sanitized = raw_codes.apply(sanitize_code)
-        if sanitized.isna().any():
-            st.error("Codes M2 invalides détectés.")
-            st.dataframe(raw_codes[sanitized.isna()].to_frame("Code fourni"))
+        invalid_mask = sanitized.isna()
+
+        if invalid_mask.any():
+            st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
+            st.dataframe(raw_codes[invalid_mask].to_frame("Code fourni"))
             st.stop()
 
         codes = sanitized
         dstr  = TODAY
 
-        # ----- FICHIER 1 : DFRXHYBRPCP -----
+        # ---------- FICHIER 1 : DFRXHYBRPCP ----------
         df1 = pd.DataFrame({
             0: [f"PC_PROFILE_{entreprise}"] * len(codes),
             1: [statut] * len(codes),
@@ -495,7 +527,7 @@ def generator_pc():
             mime="text/plain",
         )
 
-        # ----- FICHIER 2 : ACK CMP -----
+        # ---------- FICHIER 2 : AFRXHYBRCMP (ACK CMP) ----------
         ack_cmp = f"DFRXHYBRCMP{dstr}000068240530ITDFRXHYBRCMP{dstr}CCMGHYBFRX                    OK000000"
         st.download_button(
             "📥 AFRXHYBRCMP",
@@ -504,7 +536,7 @@ def generator_pc():
             mime="text/plain",
         )
 
-        # ----- FICHIER 3 : DFRXHYBRCMP -----
+        # ---------- FICHIER 3 : DFRXHYBRCMP ----------
         cmp_content = (
             f"PC_{entreprise};PC_{entreprise};PC_PROFILE_{entreprise};"
             f"{','.join(comptes)};frxProductCatalog:Online"
@@ -516,7 +548,7 @@ def generator_pc():
             mime="text/plain",
         )
 
-        # ----- FICHIER 4 : ACK PCP -----
+        # ---------- FICHIER 4 : AFRXHYBRPCP (ACK PCP) ----------
         ack_pcp = f"DFRXHYBRPCP{dstr}000068200117ITDFRXHYBRPCP{dstr}RCMRHYBFRX                    OK000000"
         st.download_button(
             "📥 AFRXHYBRPCP",
@@ -525,7 +557,7 @@ def generator_pc():
             mime="text/plain",
         )
 
-        st.success("4 fichiers générés.")
+        st.success("4 fichiers générés sans erreur 👌")
 
 def generator_maj_m2():
     st.subheader("Mise à jour M2 avant génération")
