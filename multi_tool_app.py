@@ -298,10 +298,18 @@ def page_classification():
             col_m2:  "M2",
         }).copy()
 
-        df_out["M2"] = (
-    df_out["M2"].astype(str).str.zfill(6)     # normalise en 6 chiffres
-                          .map(lambda x: f"M2_{x}")  # préfixe
-)
+        # ---- contrôle & normalisation des codes M2 ----
+raw_m2 = df_out["M2"].astype(str).str.strip()
+sanitized = raw_m2.apply(sanitize_code)        # même fonction que dans PC
+invalid_mask = sanitized.isna()
+
+if invalid_mask.any():
+    st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
+    st.dataframe(raw_m2[invalid_mask].to_frame("Code fourni"))
+    st.stop()
+
+df_out["M2"] = sanitized.map(lambda x: f"M2_{x}")
+
 
         df_out["onsenfou"] = None
         df_out["Entreprises"] = entreprise
