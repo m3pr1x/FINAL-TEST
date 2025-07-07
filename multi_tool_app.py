@@ -327,7 +327,7 @@ def page_classification():
             mime="text/plain",
         )
 
-        st.success("Fichiers CMR générés avec succès ✅") !")
+        st.success("Fichiers CMR générés avec succès ✅")
 
 # ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (correctif) ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
