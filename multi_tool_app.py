@@ -308,7 +308,7 @@ def page_classification():
             st.dataframe(raw_m2[invalid_mask].to_frame("Code fourni"))
             st.stop()
 
-df_out["M2"] = sanitized.map(lambda x: f"M2_{x}")
+        df_out["M2"] = sanitized.map(lambda x: f"M2_{x}")
 
 
         df_out["onsenfou"] = None
