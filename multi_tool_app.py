@@ -83,28 +83,219 @@ def sanitize_numeric(series: pd.Series, width: int) -> Tuple[pd.Series, pd.Serie
     bad = ~s_pad.str.fullmatch(fr"\d{{{width}}}")
     return s_pad, bad
 
-# ═══════════════════ PAGE 1 – MISE À JOUR M2 (PC & Appairage) ═══════════════════
-# (code d’origine inchangé : seul l’onglet PF était concerné par la correction)
+# ──────────────────────────── HELPERS (Mise à jour M2) ────────────────────────────
+def _preview_file(upload) -> None:
+    """Aperçu interactif : 5 lignes + liste des colonnes."""
+    try:
+        df = read_any(upload)
+    except Exception as e:
+        st.error(f"{upload.name} – lecture impossible : {e}")
+        return
+    with st.expander(f"📄 Aperçu – {upload.name}", expanded=False):
+        st.dataframe(df.head())
+        meta = pd.DataFrame({"N°": range(1, len(df.columns)+1),
+                             "Nom de colonne": df.columns})
+        st.table(meta)
 
-def _preview_file(upload):  # .. helper (inchangé)
-    ...
 
-def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]):
-    ...
+def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
+    """Widget upload + état mémoire + aperçu automatique."""
+    for key in lots:
+        st.session_state.setdefault(f"{prefix}_{key}_files", [])
+        st.session_state.setdefault(f"{prefix}_{key}_names", [])
+
+    cols = st.columns(len(lots))
+    for (key, (title, lab_ref, lab_val)), col in zip(lots.items(), cols):
+        with col:
+            st.subheader(title)
+            uploads = st.file_uploader("Déposer…", type=("csv", "xlsx"),
+                                       accept_multiple_files=True,
+                                       key=f"{prefix}_{key}_up")
+            if uploads:
+                new = [u for u in uploads
+                       if u.name not in st.session_state[f"{prefix}_{key}_names"]]
+                st.session_state[f"{prefix}_{key}_files"] += new
+                st.session_state[f"{prefix}_{key}_names"] += [u.name for u in new]
+                st.success(f"{len(new)} fichier(s) ajouté(s)")
+                for up in new:
+                    _preview_file(up)
+
+            st.number_input(lab_ref, 1, 50, 1,
+                            key=f"{prefix}_{key}_ref",
+                            help="Index de la colonne contenant la référence produit")
+            st.number_input(lab_val, 1, 50, 2,
+                            key=f"{prefix}_{key}_val",
+                            help="Index de la colonne contenant le code M2")
+            st.caption(f"{len(st.session_state[f'{prefix}_{key}_files'])} fichier(s) • RAM {RAM()})")
+
 
 def _add_cols(df: pd.DataFrame, ref_i: int, m2_i: int,
               ref_label: str, m2_label: str) -> pd.DataFrame:
-    ...
+    sub = df.iloc[:, [ref_i-1, m2_i-1]].copy()
+    sub.columns = [ref_label, m2_label]
+    sub[m2_label] = to_m2(sub[m2_label])
+    return sub
 
-def _build_m2_update(prefix: str, lots):    ...
-def _build_appairage(prefix: str, lots, extra_cols): ...
 
-def page_update_m2():  # (code d’origine)
-    ...
+def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.DataFrame:
+    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
+                        ignore_index=True).drop_duplicates()
+           for k in lots}
 
-# ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
-def page_classification():  # (inchangé)
-    ...
+    old_df = _add_cols(dfs["old"],
+                       st.session_state[f"{prefix}_old_ref"],
+                       st.session_state[f"{prefix}_old_val"],
+                       "Ref", "M2_ancien")
+
+    new_df = _add_cols(dfs["new"],
+                       st.session_state[f"{prefix}_new_ref"],
+                       st.session_state[f"{prefix}_new_val"],
+                       "Ref", "M2_nouveau")
+
+    merged = new_df.merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
+    return (merged.groupby("M2_nouveau")["M2_ancien"]
+                  .agg(lambda s: s.value_counts().idxmax()
+                       if s.notna().any() else pd.NA)
+                  ).reset_index()
+
+
+def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
+                     extra_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
+                        ignore_index=True).drop_duplicates()
+           for k in lots}
+
+    old_df = _add_cols(dfs["old"],
+                       st.session_state[f"{prefix}_old_ref"],
+                       st.session_state[f"{prefix}_old_val"],
+                       "Ref", "M2_ancien")
+
+    new_df = _add_cols(dfs["new"],
+                       st.session_state[f"{prefix}_new_ref"],
+                       st.session_state[f"{prefix}_new_val"],
+                       "Ref", "M2_nouveau")
+
+    map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"]-1,
+                                 st.session_state[f"{prefix}_map_val"]-1]].copy()
+    map_df.columns = ["M2_ancien", "Code_famille_Client"]
+    map_df["M2_ancien"] = to_m2(map_df["M2_ancien"])
+    old_df["M2_ancien"] = to_m2(old_df["M2_ancien"])
+
+    merged = (new_df.merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
+                     .merge(map_df, on="M2_ancien", how="left"))
+    st.session_state["cl_cols"] = list(merged.columns)
+
+    fam = (merged.groupby("M2_nouveau")["Code_famille_Client"]
+                 .agg(lambda s: s.value_counts().idxmax()
+                      if s.notna().any() else pd.NA)
+                 ).reset_index()
+
+    missing = fam[fam["Code_famille_Client"].isna()].copy()
+    if extra_cols:
+        keep = [c for c in extra_cols if c in merged.columns]
+        missing = missing.merge(merged[["M2_nouveau"] + keep].drop_duplicates(),
+                                on="M2_nouveau", how="left")
+    return fam, missing
+
+
+# ═══════════════════ PAGE 1 – MISE À JOUR M2 (UI complète) ═══════════════════
+def page_update_m2() -> None:
+    st.header("🔄 Mise à jour des codes M2")
+    tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Appairage client"])
+
+    # ----- Onglet Personal Catalogue -----
+    with tab_pc:
+        LOTS_PC = {
+            "old": ("Données N‑1", "Ref produit", "M2 ancien"),
+            "new": ("Données N"  , "Ref produit", "M2 nouveau"),
+        }
+        _uploader_state("pc", LOTS_PC)
+
+        if st.button("Générer : M2_MisAJour.csv"):
+            if not all(st.session_state[f"pc_{k}_files"] for k in LOTS_PC):
+                st.warning("Chargez à la fois les fichiers N‑1 **et** N.")
+                st.stop()
+            maj_df = _build_m2_update("pc", LOTS_PC)
+            st.download_button("⬇️ Télécharger M2_MisAJour.csv",
+                               maj_df.to_csv(index=False, sep=";"),
+                               file_name=f"M2_MisAJour_{TODAY}.csv",
+                               mime="text/csv")
+            st.dataframe(maj_df.head())
+
+    # ----- Onglet Appairage client -----
+    with tab_cli:
+        LOTS_CL = {
+            "old": ("Données N‑1", "Ref produit", "M2 ancien"),
+            "new": ("Données N"  , "Ref produit", "M2 nouveau"),
+            "map": ("Mapping"    , "M2 ancien",   "Code famille client"),
+        }
+        _uploader_state("cl", LOTS_CL)
+
+        extra_cols = st.multiselect(
+            "Colonnes additionnelles (pour « a_remplir.csv »)",
+            options=st.session_state.get("cl_cols", []),
+        )
+
+        if st.button("Générer : fichiers d’appairage"):
+            if not all(st.session_state[f"cl_{k}_files"] for k in LOTS_CL):
+                st.warning("Chargez les **3** jeux de données (N‑1, N, Mapping).")
+                st.stop()
+
+            # Garde‑fou : indices identiques
+            if (st.session_state["cl_old_ref"] == st.session_state["cl_old_val"] or
+                st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
+                st.error("« Ref produit » et « M2 » doivent être deux colonnes différentes.")
+                st.stop()
+
+            appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
+            st.download_button("⬇️ appairage_M2_famille.csv",
+                               appair_df.to_csv(index=False, sep=";"),
+                               file_name=f"appairage_M2_CodeFamilleClient_{TODAY}.csv",
+                               mime="text/csv")
+            st.download_button("⬇️ a_remplir.csv",
+                               missing_df.to_csv(index=False, sep=";"),
+                               file_name=f"a_remplir_{TODAY}.csv",
+                               mime="text/csv")
+            st.dataframe(appair_df.head())
+
+
+# ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
+def page_classification():
+    st.header("🧩 Classification Code")
+    pair_file = st.file_uploader("1) Appairage M2 ➜ Code famille (CSV)", type="csv")
+    if not pair_file:
+        st.info("Commence par charger l'appairage M2.")
+        st.stop()
+
+    pair_df = read_csv(io.BytesIO(pair_file.getvalue()))
+    exp_cols = {"M2", "Code_famille_Client"}
+    if not exp_cols.issubset(pair_df.columns):
+        st.error(f"Le fichier doit contenir : {exp_cols}")
+        st.stop()
+    pair_df["M2"] = to_m2(pair_df["M2"])
+    st.success(f"{len(pair_df)} lignes chargées")
+    st.dataframe(pair_df.head())
+
+    data_files = st.file_uploader("2) Fichiers à classifier (CSV/XLSX/XLS)",
+                                  accept_multiple_files=True,
+                                  type=("csv", "xlsx", "xls"))
+    if not data_files:
+        st.info("Ajoute un ou plusieurs fichiers à classifier.")
+        st.stop()
+
+    results = []
+    for upl in data_files:
+        df = read_any(upl)
+        st.markdown(f"##### {upl.name}")
+        cols = [f\"{i+1} – {c}\" for i, c in enumerate(df.columns)]
+        idx = st.selectbox(\"Colonne M2\", cols, key=f\"m2col_{upl.name}\")
+        m2_col = df.columns[int(idx.split(' –')[0]) - 1]
+        df[\"M2\"] = to_m2(df[m2_col])
+        merged = df.merge(pair_df[[\"M2\", \"Code_famille_Client\"]], on=\"M2\", how=\"left\")
+        st.write(f\"→ {merged['Code_famille_Client'].notna().sum()} / {len(df)} lignes appariées)
+        results.append(merged)
+        with st.expander(\"Aperçu\"):#"
+
 
 # ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (corrigé) ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
