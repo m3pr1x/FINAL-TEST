@@ -282,6 +282,8 @@ def page_classification():
     st.success("Classification terminée !")
 
 # ═══════════════════  PAGE 3 – PF1 → PF6 GENERATOR ═══════════════════
+# ═══════════════════  PAGE 3 – PF1 → PF6 GENERATOR ═══════════════════
+
 def page_multiconnexion():
     st.header("📦 Générateur PF1 → PF6 (Multiconnexion)")
     integration_type = st.radio("Type d’intégration", ["cXML", "OCI"], horizontal=True)
@@ -292,7 +294,7 @@ def page_multiconnexion():
         "**Adresse**, **ManagingBranch** (4 chiffres)."
     )
 
-    # Template
+    # Template (identique)
     with st.expander("📑 Template dfrecu.xlsx"):
         tpl_cols = ["Numéro de compte", "Raison sociale", "Adresse", "ManagingBranch"]
         tpl_buf = io.BytesIO()
@@ -336,29 +338,45 @@ def page_multiconnexion():
         # build_tables vient du code original (non reproduit ici pour concision)
         tables: List[pd.DataFrame] = build_tables(df_src)  # type: ignore
 
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        labels = ["PF1", "PF2", "PF3", "PF4", "PF5"] + (["PF6"] if integration_type == "cXML" else [])
-        files_bytes = {}
+        # ─── mapping label → nom de fichier ───
+        file_map = {
+            "PF1": f"B2B Units creation_{entreprise}.xlsx",
+            "PF2": f"Table_chargement_adresse_{entreprise}.xlsx",
+            "PF3": f"Table_PunchoutAccountAndBranchAssociation_{entreprise}.xlsx",
+            "PF4": f"PunchoutBranchAliasAssociation_{entreprise}.xlsx",
+            "PF5": f"Table_Attach_B2BUnitstoUsers_{entreprise}.xlsx",
+            "PF6": f"PunchoutAccountSetup_{entreprise}.xlsx",
+        }
+
+        labels = ["PF1", "PF2", "PF3", "PF4", "PF5"]
+        if integration_type == "cXML":
+            labels.append("PF6")
+
+        files_bytes: Dict[str, bytes] = {}
         for label, df in zip(labels, tables):
+            file_name = file_map[label]
             data_bytes = to_xlsx(df)
-            fname = f"{label}_{entreprise}_{ts}.xlsx"
-            files_bytes[fname] = data_bytes
-            st.download_button(f"⬇️ {label}", data=data_bytes, file_name=fname,
-                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            files_bytes[file_name] = data_bytes
+            st.download_button(
+                f"⬇️ {label}", data=data_bytes,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
         st.success("✅ Fichiers prêts !")
         st.dataframe(tables[0].head())
 
-        # Option Outlook
+        # ═════ Export Outlook ═════
         st.markdown("---")
         st.subheader("📧 Exporter via Outlook Desktop")
         if IS_OUTLOOK:
             dest = st.text_input("Destinataire (optionnel)")
-            subj = f"Fichiers PF – {entreprise} ({ts})"
+            subj = f"Fichiers PF – {entreprise} ({datetime.now():%Y-%m-%d %H:%M})"
             if st.button("Ouvrir un brouillon Outlook"):
                 create_outlook_draft(list(files_bytes.items()), to_=dest, subject=subj)
                 st.success("Brouillon Outlook ouvert.")
         else:
-            st.info("Automatisation Outlook indisponible sur cet environnement.")
+            st.info("Automatisation Outlook indisponible sur cet environnement."
 
 # ═══════════════════  PAGE 4 – DFRX/AFRX (PC & MàJ M2) ═══════════════════
 def page_dfrx_pc():
