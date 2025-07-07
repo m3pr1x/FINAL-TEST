@@ -303,20 +303,7 @@ def page_dfrx_pc():
     nav = st.radio("Choisir l’outil", ["Générateur PC", "Mise à jour M2"], horizontal=True)
     (generator_pc if nav == "Générateur PC" else generator_maj_m2)()
 
-# ═══════════════════ PAGE 5 – CPN GENERATOR (inchangé) ═══════════════════
-def page_cpn(): ...
-# (code d’origine)
 
-# ═══════════════════ MENU PRINCIPAL ═══════════════════
-PAGES = {
-    "Mise à jour M2": page_update_m2,
-    "Classification Code": page_classification,
-    "PF1 → PF6 Generator": page_multiconnexion,
-    "Générateur PC / MàJ M2": page_dfrx_pc,
-    "CPN Generator": page_cpn,
-}
-choice = st.sidebar.radio("Navigation", list(PAGES.keys()))
-PAGES[choice]()
 # ═══════════════════  PAGE 5 – CPN GENERATOR ═══════════════════
 def page_cpn():
     st.header("📑 Générateur CPN (DFRXHYBCPNA / AFRXHYBCPNA)")
