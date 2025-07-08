@@ -496,7 +496,7 @@ def export_pc_files(df1: pd.DataFrame,
     # ------ 3. DFRXHYBRCMP (rattachement) ---
     cmp_content = (
         f"PC_{entreprise};PC_{entreprise};PC_PROFILE_{entreprise};"
-        f\"{','.join(comptes)};frxProductCatalog:Online\"
+        f"{','.join(comptes)};frxProductCatalog:Online\"
     )
     st.download_button(
         "⬇️ DFRXHYBRCMP",
