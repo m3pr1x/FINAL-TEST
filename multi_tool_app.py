@@ -108,7 +108,7 @@ def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
     for (key, (title, lab_ref, lab_val)), col in zip(lots.items(), cols):
         with col:
             st.subheader(title)
-            uploads = st.file_uploader("Déposer…", type=("csv", "xlsx"),
+            uploads = st.file_uploader("Déposer votre fichier", type=("csv", "xlsx"),
                                        accept_multiple_files=True,
                                        key=f"{prefix}_{key}_up")
             if uploads:
@@ -165,12 +165,12 @@ def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
     old_df = _add_cols(dfs["old"],
                        st.session_state[f"{prefix}_old_ref"],
                        st.session_state[f"{prefix}_old_val"],
-                       "Ref", "M2_ancien")
+                       "Référence", "M2_ancien")
 
     new_df = _add_cols(dfs["new"],
                        st.session_state[f"{prefix}_new_ref"],
                        st.session_state[f"{prefix}_new_val"],
-                       "Ref", "M2_nouveau")
+                       "Référence", "M2_nouveau")
 
     map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"]-1,
                                  st.session_state[f"{prefix}_map_val"]-1]].copy()
@@ -196,13 +196,13 @@ def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
 
 def page_update_m2() -> None:
     st.header("🔄 Mise à jour des codes M2")
-    tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Appairage client"])
+    tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Classification Code"])
 
     # ----- Onglet Personal Catalogue -----
     with tab_pc:
         LOTS_PC = {
-            "old": ("Données N‑1", "Ref produit", "M2 ancien"),
-            "new": ("Données N",   "Ref produit", "M2 nouveau"),
+            "old": ("Données N‑1", "Référence produit", "Ancien code M2"),
+            "new": ("Données N",   "Référence produit", "Nouveau code M2"),
         }
         _uploader_state("pc", LOTS_PC)
 
@@ -264,10 +264,10 @@ def page_classification():
         1. DFRXHYBRCMR<date>0000  (TSV, sans en‑tête)
         2. AFRXHYBRCMR<date>0000.txt  (ACK fixe)
     """
-    st.header("🧩 Classification Code → DFRXHYBRCMR génération")
+    st.header("🧩 Classification Code ")
 
     # --------- 1) Appairage obligatoire ---------
-    pair_file = st.file_uploader("📄 Appairage (CSV / Excel)")
+    pair_file = st.file_uploader("📄 Déposez le fichier d'appairage Code M2/Code famille client (CSV / Excel)")
     if not pair_file:
         st.info("Charge d’abord le fichier d’appairage M2 → Code famille.")
         st.stop()
@@ -276,12 +276,12 @@ def page_classification():
     st.dataframe(pair_df.head())
 
     max_cols = len(pair_df.columns)
-    idx_m2  = st.number_input("🔢 Index colonne M2", 1, max_cols, 1)
-    idx_fam = st.number_input("🔢 Index colonne Code famille", 1, max_cols, 2)
+    idx_m2  = st.number_input("🔢 Index colonne Code M2", 1, max_cols, 1)
+    idx_fam = st.number_input("🔢 Index colonne Code famille client", 1, max_cols, 2)
 
     entreprise = st.text_input("🏢 Entreprise")
 
-    if st.button("🚀 Générer fichiers CMR"):
+    if st.button("🚀 Générer les fichiers"):
         if not entreprise:
             st.warning("Renseigne le champ Entreprise.")
             st.stop()
@@ -341,7 +341,7 @@ def page_classification():
 
         st.success("Fichiers CMR générés avec succès ✅")
 
-# ═══════════════════ PAGE 3 – PF1 → PF6 GENERATOR (correctif) ═══════════════════
+# ═══════════════════ PAGE 3 – Multiconnexion ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as w:
@@ -370,7 +370,7 @@ def create_outlook_draft(att: List[Tuple[str, bytes]],
     mail.Display()
 
 def page_multiconnexion():
-    st.header("📦 Générateur PF1 → PF6 (Multiconnexion)")
+    st.header("📦 Multiconnexion")
     integration_type = st.radio("Type d’intégration", ["cXML", "OCI"], horizontal=True)
 
     st.markdown(
@@ -380,8 +380,8 @@ def page_multiconnexion():
     )
 
     # Template vierge
-    with st.expander("📑 Template dfrecu.xlsx"):
-        cols_tpl = ["Numéro de compte", "Raison sociale", "Adresse", "ManagingBranch"]
+    with st.expander("📑 Template Multiconnexion.xlsx"):
+        cols_tpl = ["Numéro de compte", "Raison sociale", "Adresse", "Code agence"]
         buf_tpl = io.BytesIO()
         pd.DataFrame([{c: "" for c in cols_tpl}]).to_excel(buf_tpl, index=False)
         buf_tpl.seek(0)
@@ -389,7 +389,7 @@ def page_multiconnexion():
                            file_name="dfrecu_template.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    up_file = st.file_uploader("📄 Fichier dfrecu", type=("csv", "xlsx", "xls"))
+    up_file = st.file_uploader("📄 Fichier Multiconnexion", type=("csv", "xlsx", "xls"))
     if not up_file:
         st.stop()
 
@@ -407,7 +407,7 @@ def page_multiconnexion():
     pc_name = st.text_input("Nom du catalogue (sans PC_)", placeholder="CATALOGUE").strip() \
               if pc_enabled == "True" else ""
 
-    if st.button("🚀 Générer PF"):
+    if st.button("🚀 Générer les fichiers"):
         if not all([entreprise, punchout_user, identity, (pc_enabled == "False" or pc_name)]):
             st.warning("Remplis tous les champs requis.")
             st.stop()
@@ -521,11 +521,11 @@ def export_pc_files(df1: pd.DataFrame,
 
 # ─────────────────────────  GÉNÉRATEUR PC (corrigé)  ─────────────────────────
 def generator_pc():
-    st.subheader("Générateur PC")
+    st.subheader("Personal Catalogue")
 
     # 1) Chargement des fichiers ------------------------------------------------
     codes_file = st.file_uploader(
-        "📄 Fichier des codes produit (CSV / Excel)",
+        "📄 Fichier des codes Mach_2 (CSV / Excel)",
         type=("csv", "xlsx", "xls"),
         key="pc_codes",
     )
@@ -725,10 +725,10 @@ def page_dfrx_pc():
 
 # ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
 def page_cpn():
-    st.header("📑 Générateur CPN (DFRXHYBCPNA / AFRXHYBCPNA)")
+    st.header("📑 CPN")
     colA, colB = st.columns(2)
     with colA:
-        main_file = st.file_uploader("Appairage client", type=("csv", "xlsx", "xls"))
+        main_file = st.file_uploader("Appairage Code produit client/Référence interne", type=("csv", "xlsx", "xls"))
     with colB:
         cli_file  = st.file_uploader("Périmètre (comptes client)", type=("csv", "xlsx", "xls"))
     if not (main_file and cli_file):
@@ -736,8 +736,8 @@ def page_cpn():
 
     df_main = read_any(main_file)
     max_cols = len(df_main.columns)
-    col_int = st.selectbox("Colonne Réf. interne", range(1, max_cols+1), 0)
-    col_cli = st.selectbox("Colonne Réf. client", range(1, max_cols+1), 1 if max_cols > 1 else 0)
+    col_int = st.selectbox("Colonne Référence produit interne", range(1, max_cols+1), 0)
+    col_cli = st.selectbox("Colonne Code produit client", range(1, max_cols+1), 1 if max_cols > 1 else 0)
 
     if st.button("🚀 Générer CPN"):
         df_cli = read_any(cli_file)
@@ -764,9 +764,10 @@ def page_cpn():
 PAGES = {
     "Mise à jour M2": page_update_m2,
     "Classification Code": page_classification,
-    "PF1 → PF6 Generator": page_multiconnexion,
-    "Générateur PC / MàJ M2": page_dfrx_pc,
-    "CPN Generator": page_cpn,
+    "Multiconnexion": page_multiconnexion,
+    "Personal Catalogue": page_dfrx_pc,
+    "CPN": page_cpn,
 }
-choice = st.sidebar.radio("Navigation", list(PAGES.keys()), key="nav_main")
-PAGES[choice]()
+choice = st.radio("Navigation", list(PAGES.keys()),
+                  horizontal=True, key="nav_main")
+
