@@ -771,14 +771,16 @@ PAGES = {
     "Personal Catalogue": page_dfrx_pc,
     "CPN": page_cpn,
 }
-with st.sidebar:
-    choice = option_menu(
-        menu_title=None,                       # icône « burger » seulement
-        options=list(PAGES.keys()),
-        icons=[""] * len(PAGES),               # ← enlève complètement les chevrons
-        default_index=0,
-        key="nav_main",
-    )
+choice = st.sidebar.radio(
+    label      = "Navigation",
+    options    = list(PAGES.keys()),
+    index      = 0,
+    key        = "nav_main",
+    label_visibility = "collapsed"   # si tu veux cacher le mot “Navigation”
+)
+
+PAGES[choice]()          # lance la page choisie
+
 
 PAGES[choice]()
 
