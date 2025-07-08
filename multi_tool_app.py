@@ -473,7 +473,7 @@ def export_pc_files(df1: pd.DataFrame,
                     dstr: str = TODAY) -> None:
     """Crée les 4 boutons de téléchargement PC (profil + 2 ACK + rattachement)."""
 
-    # ------ 1. DFRXHYBRPCP (profil PC) ------
+    # 1‑ profil PC
     st.download_button(
         "⬇️ DFRXHYBRPCP",
         df1.to_csv(sep=";", index=False, header=False),
@@ -481,7 +481,7 @@ def export_pc_files(df1: pd.DataFrame,
         mime="text/plain",
     )
 
-    # ------ 2. AFRXHYBRCMP (ACK CMP) --------
+    # 2‑ ACK CMP
     ack_cmp = (
         f"DFRXHYBRCMP{dstr}000068240530IT"
         f"DFRXHYBRCMP{dstr}CCMGHYBFRX                    OK000000"
@@ -493,10 +493,10 @@ def export_pc_files(df1: pd.DataFrame,
         mime="text/plain",
     )
 
-    # ------ 3. DFRXHYBRCMP (rattachement) ---
+    # 3‑ rattachement comptes → profil
     cmp_content = (
         f"PC_{entreprise};PC_{entreprise};PC_PROFILE_{entreprise};"
-        f"{','.join(comptes)};frxProductCatalog:Online\"
+        f"{','.join(comptes)};frxProductCatalog:Online"
     )
     st.download_button(
         "⬇️ DFRXHYBRCMP",
@@ -505,7 +505,7 @@ def export_pc_files(df1: pd.DataFrame,
         mime="text/plain",
     )
 
-    # ------ 4. AFRXHYBRPCP (ACK PCP) --------
+    # 4‑ ACK PCP
     ack_pcp = (
         f"DFRXHYBRPCP{dstr}000068200117IT"
         f"DFRXHYBRPCP{dstr}RCMRHYBFRX                    OK000000"
@@ -516,6 +516,7 @@ def export_pc_files(df1: pd.DataFrame,
         file_name=f"AFRXHYBRPCP{dstr}0000.txt",
         mime="text/plain",
     )
+
 
 
 # ─────────────────────────  GÉNÉRATEUR PC (corrigé)  ─────────────────────────
