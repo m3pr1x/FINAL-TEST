@@ -8,7 +8,7 @@ Correctifs 07/2025
     • Correction d’une parenthèse non fermée (Outlook)
     • Clé 'nav_main' pour le menu (évite DuplicateElementId)
 """
-from streamlit_option_menu import option_menu
+
 
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import csv, io, re, tempfile, os, sys
 from datetime import datetime
 from itertools import product
 from typing import Dict, Tuple, List
+from streamlit_option_menu import option_menu
 
 import pandas as pd
 import streamlit as st
