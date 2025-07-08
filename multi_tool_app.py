@@ -768,6 +768,6 @@ PAGES = {
     "Personal Catalogue": page_dfrx_pc,
     "CPN": page_cpn,
 }
-choice = st.radio("Navigation", list(PAGES.keys()),
-                  horizontal=True, key="nav_main")
+choice = st.sidebar.radio("Navigation", list(PAGES.keys()), key="nav_main")
+
 
