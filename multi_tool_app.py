@@ -467,17 +467,56 @@ def generator_pc_common(codes: pd.Series, entreprise: str, statut: str) -> pd.Da
         4: ["frxProductCatallog:Online"] * len(codes),
     }).drop_duplicates()
 
-def export_pc_files(df1: pd.DataFrame, dstr: str):
-    dfrx_name = f"DFRXHYBRPCP{dstr}0000"
-    afrx_name = f"AFRXHYBRPCP{dstr}0000.txt"
-    afrx_txt = (
+def export_pc_files(df1: pd.DataFrame,
+                    comptes: pd.Series,
+                    entreprise: str,
+                    dstr: str = TODAY) -> None:
+    """Crée les 4 boutons de téléchargement PC (profil + 2 ACK + rattachement)."""
+
+    # ------ 1. DFRXHYBRPCP (profil PC) ------
+    st.download_button(
+        "⬇️ DFRXHYBRPCP",
+        df1.to_csv(sep=";", index=False, header=False),
+        file_name=f"DFRXHYBRPCP{dstr}0000",
+        mime="text/plain",
+    )
+
+    # ------ 2. AFRXHYBRCMP (ACK CMP) --------
+    ack_cmp = (
+        f"DFRXHYBRCMP{dstr}000068240530IT"
+        f"DFRXHYBRCMP{dstr}CCMGHYBFRX                    OK000000"
+    )
+    st.download_button(
+        "⬇️ AFRXHYBRCMP",
+        ack_cmp,
+        file_name=f"AFRXHYBRCMP{dstr}0000.txt",
+        mime="text/plain",
+    )
+
+    # ------ 3. DFRXHYBRCMP (rattachement) ---
+    cmp_content = (
+        f"PC_{entreprise};PC_{entreprise};PC_PROFILE_{entreprise};"
+        f\"{','.join(comptes)};frxProductCatalog:Online\"
+    )
+    st.download_button(
+        "⬇️ DFRXHYBRCMP",
+        cmp_content,
+        file_name=f"DFRXHYBRCMP{dstr}0000",
+        mime="text/plain",
+    )
+
+    # ------ 4. AFRXHYBRPCP (ACK PCP) --------
+    ack_pcp = (
         f"DFRXHYBRPCP{dstr}000068200117IT"
         f"DFRXHYBRPCP{dstr}RCMRHYBFRX                    OK000000"
     )
-    st.download_button("⬇️ DFRXHYBRPCP", df1.to_csv(index=False, header=False, sep=";"),
-                       file_name=dfrx_name, mime="text/plain")
-    st.download_button("⬇️ AFRXHYBRPCP", afrx_txt,
-                       file_name=afrx_name, mime="text/plain")
+    st.download_button(
+        "⬇️ AFRXHYBRPCP",
+        ack_pcp,
+        file_name=f"AFRXHYBRPCP{dstr}0000.txt",
+        mime="text/plain",
+    )
+
 
 # ─────────────────────────  GÉNÉRATEUR PC (corrigé)  ─────────────────────────
 def generator_pc():
