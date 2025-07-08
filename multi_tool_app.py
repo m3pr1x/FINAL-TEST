@@ -768,6 +768,14 @@ PAGES = {
     "Personal Catalogue": page_dfrx_pc,
     "CPN": page_cpn,
 }
-choice = st.sidebar.radio("Navigation", list(PAGES.keys()), key="nav_main")
+with st.sidebar:
+    choice = option_menu(
+        menu_title=None,                 # ≡ icône “burger”, pas de titre fixe
+        options=list(PAGES.keys()),
+        icons=["chevron-right"] * len(PAGES),   # ou tes propres icônes
+        menu_icon="list",
+        default_index=0,
+        key="nav_main",
+    )
 
-
+PAGES[choice]() 
