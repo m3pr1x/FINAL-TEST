@@ -165,12 +165,12 @@ def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
     old_df = _add_cols(dfs["old"],
                        st.session_state[f"{prefix}_old_ref"],
                        st.session_state[f"{prefix}_old_val"],
-                       "Référence", "M2_ancien")
+                       "Ref", "M2_ancien")
 
     new_df = _add_cols(dfs["new"],
                        st.session_state[f"{prefix}_new_ref"],
                        st.session_state[f"{prefix}_new_val"],
-                       "Référence", "M2_nouveau")
+                       "Ref", "M2_nouveau")
 
     map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"]-1,
                                  st.session_state[f"{prefix}_map_val"]-1]].copy()
