@@ -712,7 +712,8 @@ def generator_maj_m2():
         # --- fichiers de sortie (identiques au Générateur PC)
         dstr = TODAY
         df1 = generator_pc_common(updated_codes, entreprise, statut)
-        export_pc_files(df1, dstr)   # génère les 4 boutons
+        export_pc_files(df1, comptes, entreprise, dstr)
+   # génère les 4 boutons
 
         st.success("Codes mis à jour + 4 fichiers générés.")
 
