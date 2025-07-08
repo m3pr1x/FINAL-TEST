@@ -198,18 +198,18 @@ def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
     return fam, missing
 
 def page_update_m2() -> None:
-    st.header("🔄 Mise à jour des codes M2")
+    st.header("🔄 Mise à jour des codes Mach_2")
     tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Classification Code"])
 
     # ----- Onglet Personal Catalogue -----
     with tab_pc:
         LOTS_PC = {
-            "old": ("Données N‑1", "Référence produit", "Ancien code M2"),
-            "new": ("Données N",   "Référence produit", "Nouveau code M2"),
+            "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
+            "new": ("Nouveau plan d'offre",   "Référence produit", "Nouveau code Mach_2"),
         }
         _uploader_state("pc", LOTS_PC)
 
-        if st.button("Générer : M2_MisAJour.csv"):
+        if st.button("Générer le fichier"):
             if not all(st.session_state[f"pc_{k}_files"] for k in LOTS_PC):
                 st.warning("Chargez à la fois les fichiers N‑1 **et** N.")
                 st.stop()
@@ -223,9 +223,9 @@ def page_update_m2() -> None:
     # ----- Onglet Appairage client -----
     with tab_cli:
         LOTS_CL = {
-            "old": ("Données N‑1", "Ref produit", "M2 ancien"),
-            "new": ("Données N",   "Ref produit", "M2 nouveau"),
-            "map": ("Mapping",     "M2 ancien",   "Code famille client"),
+            "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
+            "new": ("Nouveau plan d'offre",   "Référence produit", "Nouveau code Mach_2"),
+            "map": ("Appairage code famille client/Ancien code Mach_2",     "Ancien code Mach2",   "Code famille client"),
         }
         _uploader_state("cl", LOTS_CL)
 
@@ -270,16 +270,16 @@ def page_classification():
     st.header("🧩 Classification Code ")
 
     # --------- 1) Appairage obligatoire ---------
-    pair_file = st.file_uploader("📄 Déposez le fichier d'appairage Code M2/Code famille client (CSV / Excel)")
+    pair_file = st.file_uploader("📄 Déposer le fichier d'appairage Code Mach_2/Code famille client (CSV / Excel)")
     if not pair_file:
-        st.info("Charge d’abord le fichier d’appairage M2 → Code famille.")
+        st.info("Charger d’abord le fichier d’appairage Mach_2 → Code famille.")
         st.stop()
 
     pair_df = read_any(pair_file)
     st.dataframe(pair_df.head())
 
     max_cols = len(pair_df.columns)
-    idx_m2  = st.number_input("🔢 Index colonne Code M2", 1, max_cols, 1)
+    idx_m2  = st.number_input("🔢 Index colonne Code Mach_2", 1, max_cols, 1)
     idx_fam = st.number_input("🔢 Index colonne Code famille client", 1, max_cols, 2)
 
     entreprise = st.text_input("🏢 Entreprise")
@@ -342,7 +342,7 @@ def page_classification():
             mime="text/plain",
         )
 
-        st.success("Fichiers CMR générés avec succès ✅")
+        st.success("Fichiers générés avec succès ✅")
 
 # ═══════════════════ PAGE 3 – Multiconnexion ═══════════════════
 def to_xlsx(df: pd.DataFrame) -> bytes:
@@ -377,9 +377,9 @@ def page_multiconnexion():
     integration_type = st.radio("Type d’intégration", ["cXML", "OCI"], horizontal=True)
 
     st.markdown(
-        "Téléchargez le template, remplissez‑le puis uploadez votre fichier.  \n"
+        "Télécharger le modèle, le compléter, puis téléverser le fichier.  \n"
         "Colonnes requises : **Numéro de compte** (7 chiffres), **Raison sociale**, "
-        "**Adresse**, **ManagingBranch** (4 chiffres)."
+        "**Adresse**, **Code d'agence** (4 chiffres)."
     )
 
     # Template vierge
@@ -392,7 +392,7 @@ def page_multiconnexion():
                            file_name="dfrecu_template.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    up_file = st.file_uploader("📄 Fichier Multiconnexion", type=("csv", "xlsx", "xls"))
+    up_file = st.file_uploader("📄 Déposer Fichier Multiconnexion", type=("csv", "xlsx", "xls"))
     if not up_file:
         st.stop()
 
@@ -412,7 +412,7 @@ def page_multiconnexion():
 
     if st.button("🚀 Générer les fichiers"):
         if not all([entreprise, punchout_user, identity, (pc_enabled == "False" or pc_name)]):
-            st.warning("Remplis tous les champs requis.")
+            st.warning("Remplire tous les champs requis.")
             st.stop()
 
         df_src = read_any(up_file)
@@ -528,7 +528,7 @@ def generator_pc():
 
     # 1) Chargement des fichiers ------------------------------------------------
     codes_file = st.file_uploader(
-        "📄 Fichier des codes Mach_2 (CSV / Excel)",
+        "📄 Déposer le Fichier des codes Mach_2 (CSV / Excel)",
         type=("csv", "xlsx", "xls"),
         key="pc_codes",
     )
@@ -539,7 +539,7 @@ def generator_pc():
             st.write("Index colonnes :", [f"{i+1} – {c}" for i, c in enumerate(df_codes_tmp.columns)])
 
     compte_file = st.file_uploader(
-        "📄 Fichier des numéros de compte (CSV / Excel)",
+        "📄 Déposer le Fichier des numéros de compte (CSV / Excel)",
         type=("csv", "xlsx", "xls"),
         key="pc_comptes",
     )
@@ -566,7 +566,7 @@ def generator_pc():
     # 4) Validation + action ----------------------------------------------------
     if st.button("🚀 Générer PC"):
         if not all([entreprise, statut]):
-            st.warning("Renseigne l’entreprise et le statut.")
+            st.warning("Renseigner l’entreprise et le statut.")
             st.stop()
 
         # Lecture définitive
@@ -670,7 +670,7 @@ def generator_maj_m2():
         required = [codes_file, compte_file, map_file, entreprise, statut,
                     col_idx_codes, col_idx_comptes, col_idx_old, col_idx_new]
         if not all(required):
-            st.warning("Remplis tous les champs et joins les 3 fichiers.")
+            st.warning("Remplir tous les champs et joins les 3 fichiers.")
             st.stop()
 
         # --- lecture fichiers
@@ -773,12 +773,13 @@ PAGES = {
 }
 with st.sidebar:
     choice = option_menu(
-        menu_title=None,                 # ≡ icône “burger”, pas de titre fixe
+        menu_title=None,                       # icône « burger » seulement
         options=list(PAGES.keys()),
-        icons=["chevron-right"] * len(PAGES),   # ou tes propres icônes
-        menu_icon="list",
+        icons=[""] * len(PAGES),               # ← enlève complètement les chevrons
         default_index=0,
         key="nav_main",
     )
+
+PAGES[choice]()
 
 PAGES[choice]() 
