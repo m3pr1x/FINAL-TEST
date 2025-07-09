@@ -237,7 +237,7 @@ def page_update_m2() -> None:
             st.dataframe(maj_df.head())
 
       # ----- Onglet Appairage client -----
-with tab_cli:              # ← même colonne que 'with tab_pc:'
+    with tab_cli:              # ← même colonne que 'with tab_pc:'
 
         LOTS_CL = {
             "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
