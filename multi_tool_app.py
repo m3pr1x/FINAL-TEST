@@ -774,38 +774,98 @@ def page_dfrx_pc():
 # ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
 def page_cpn():
     st.header("📑 CPN")
+
+    # ───────────────────────── 1) Upload des deux jeux de données ─────────────────────────
     colA, colB = st.columns(2)
+
     with colA:
-        main_file = st.file_uploader("Appairage Code produit client/Référence interne", type=("csv", "xlsx", "xls"))
+        main_file = st.file_uploader(
+            "📄 Appairage Code produit client / Référence interne",
+            type=("csv", "xlsx", "xls")
+        )
+        if main_file:
+            _preview_file(main_file)          # ↩️  même aperçu que pour les autres pages
+
     with colB:
-        cli_file  = st.file_uploader("Périmètre (comptes client)", type=("csv", "xlsx", "xls"))
+        cli_file = st.file_uploader(
+            "📄 Périmètre (comptes client)",
+            type=("csv", "xlsx", "xls")
+        )
+        if cli_file:
+            _preview_file(cli_file)           # ↩️  aperçu ajouté pour le périmètre
+
     if not (main_file and cli_file):
         st.stop()
 
+    # ───────────────────────── 2) Choix des colonnes ─────────────────────────
     df_main = read_any(main_file)
-    max_cols = len(df_main.columns)
-    col_int = st.selectbox("Colonne Référence produit interne", range(1, max_cols+1), 0)
-    col_cli = st.selectbox("Colonne Code produit client", range(1, max_cols+1), 1 if max_cols > 1 else 0)
+    df_cli  = read_any(cli_file)
 
+    max_cols_main = len(df_main.columns)
+    max_cols_cli  = len(df_cli.columns)
+
+    # colonnes du mapping produit ↔ réf interne
+    col_int = st.selectbox(
+        "Colonne Référence produit interne",
+        range(1, max_cols_main + 1),
+        index=0
+    )
+    col_cli_prod = st.selectbox(
+        "Colonne Code produit client",
+        range(1, max_cols_main + 1),
+        index=1 if max_cols_main > 1 else 0
+    )
+
+    # ➕ nouveau : colonne des comptes client dans le périmètre
+    col_cli_acc = st.selectbox(
+        "Colonne Numéro de compte client (périmètre)",
+        range(1, max_cols_cli + 1),
+        index=0
+    )
+
+    # ───────────────────────── 3) Génération des fichiers CPN ─────────────────────────
     if st.button("🚀 Générer CPN"):
-        df_cli = read_any(cli_file)
-        series_int = df_main.iloc[:, col_int-1].astype(str).str.strip()
-        invalid = ~series_int.str.fullmatch(r"\d{8}")
-        if invalid.any():
-            st.error("Réf. interne invalide (doit contenir 8 chiffres).")
-            st.dataframe(series_int[invalid]); st.stop()
-        series_cli = df_cli.iloc[:, 0].astype(str).str.strip()
-        pf = pd.DataFrame(product(series_int, series_cli), columns=["1", "2"])
-        pf["3"] = pf["1"]
+        # ---- 3.1 Vérifications rapides ----
+        series_int = df_main.iloc[:, col_int - 1].astype(str).str.strip()
+        if (~series_int.str.fullmatch(r"\d{8}")).any():
+            st.error("Réf. interne invalide : doit contenir exactement 8 chiffres.")
+            st.dataframe(series_int[~series_int.str.fullmatch(r'\d{8}')])
+            st.stop()
+
+        series_cli_prod = df_main.iloc[:, col_cli_prod - 1].astype(str).str.strip()
+        series_cli_acc  = df_cli.iloc[:,  col_cli_acc  - 1].astype(str).str.strip()
+
+        # ---- 3.2 Produit cartésien ----
+        pf = pd.DataFrame(
+            product(series_int, series_cli_acc),
+            columns=["1", "2"]
+        )
+        pf["3"] = series_cli_prod.repeat(len(series_cli_acc)).values
+
+        # ---- 3.3 Export ----
         today = TODAY
         dfrx_name = f"DFRXHYBCPNA{today}0000"
         afrx_name = f"AFRXHYBCPNA{today}0000"
-        afrx_txt = (f"DFRXHYBCPNA{today}000148250201IT"
-                    f"DFRXHYBCPNA{today}CPNAHYBFRX                    OK000000")
-        st.download_button("⬇️ DFRX (TSV)", pf.to_csv(sep="\t", index=False, header=False).encode(),
-                           file_name=dfrx_name, mime="text/tab-separated-values")
-        st.download_button("⬇️ AFRX (TXT)", afrx_txt, file_name=afrx_name, mime="text/plain")
-        st.success("Fichiers générés.")
+
+        ack_txt = (
+            f"DFRXHYBCPNA{today}000148250201IT"
+            f"DFRXHYBCPNA{today}CPNAHYBFRX                    OK000000"
+        )
+
+        st.download_button(
+            "⬇️ DFRX (TSV)",
+            pf.to_csv(sep="\t", index=False, header=False).encode(),
+            file_name=dfrx_name,
+            mime="text/tab-separated-values",
+        )
+        st.download_button(
+            "⬇️ AFRX (TXT)",
+            ack_txt,
+            file_name=afrx_name,
+            mime="text/plain",
+        )
+
+        st.success("Fichiers CPN générés ✅")
         st.dataframe(pf.head())
 
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
