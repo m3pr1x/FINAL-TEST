@@ -771,17 +771,10 @@ PAGES = {
     "Personal Catalogue": page_dfrx_pc,
     "CPN": page_cpn,
 }
-choice = st.sidebar.radio(
-    label      = "Navigation",
-    options    = list(PAGES.keys()),
-    index      = 0,
-    key        = "nav_main",
-    label_visibility = "collapsed"   # si tu veux cacher le mot “Navigation”
-)
-
-PAGES[choice]()          # lance la page choisie
-
-
-PAGES[choice]()
+with st.sidebar:
+    choice = st.radio(
+        "Navigation", list(PAGES), index=0, key="nav_main",
+        label_visibility="collapsed",
+    )
 
 PAGES[choice]() 
