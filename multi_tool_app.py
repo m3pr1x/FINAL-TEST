@@ -60,15 +60,19 @@ def read_csv(buf: io.BytesIO) -> pd.DataFrame:
             continue
     raise ValueError("CSV illisible (encodage ou séparateur)")
 
-
 def read_any(upload) -> pd.DataFrame:
-    """Lecture CSV ou Excel (XLSX/XLS) avec cache."""
     name = upload.name.lower()
     if name.endswith(".csv"):
-        return read_csv(io.BytesIO(upload.getvalue()))
-    if name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(upload, engine="openpyxl", dtype=str)
-    raise ValueError("Extension non gérée")
+        df = read_csv(io.BytesIO(upload.getvalue()))
+    elif name.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(upload, engine="openpyxl", dtype=str)
+    else:
+        raise ValueError("Extension non gérée")
+
+    # ⬇️  supprime les colonnes d’index ajoutées par Excel/CSV
+    df = df.loc[:, ~df.columns.str.match(r'^Unnamed')]
+
+    return df
 
 def to_m2(s: pd.Series) -> pd.Series:
     return s.astype(str).str.zfill(6)
