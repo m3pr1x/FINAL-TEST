@@ -159,42 +159,58 @@ def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.D
                        if s.notna().any() else pd.NA)
                   ).reset_index()
 
-def _build_appairage(prefix: str, lots: dict[str, tuple[str, str, str]],
+def _build_appairage(prefix: str,
+                     lots: dict[str, tuple[str, str, str]],
                      extra_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    # ─── 0) Lecture + concat ────────────────────────────────────────────────
     dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
                         ignore_index=True).drop_duplicates()
            for k in lots}
 
+    # ─── 1) Plan N‑1 : on garde seulement Réf + M2 ─────────────────────────
     old_df = _add_cols(dfs["old"],
                        st.session_state[f"{prefix}_old_ref"],
                        st.session_state[f"{prefix}_old_val"],
                        "Ref", "M2_ancien")
 
-    new_df = _add_cols(dfs["new"],
-                       st.session_state[f"{prefix}_new_ref"],
-                       st.session_state[f"{prefix}_new_val"],
-                       "Ref", "M2_nouveau")
+    # ─── 2) Plan N (2025) : on garde TOUTES les colonnes + normalisation M2 ─
+    ref_i_new = st.session_state[f"{prefix}_new_ref"] - 1
+    m2_i_new  = st.session_state[f"{prefix}_new_val"] - 1
 
+    new_full = dfs["new"].copy()
+    new_full.insert(0, "Ref", new_full.iloc[:, ref_i_new])
+    new_full.insert(1, "M2_nouveau", new_full.iloc[:, m2_i_new])
+    new_full["M2_nouveau"] = to_m2(new_full["M2_nouveau"])
+    new_df = new_full  # alias lisible
+
+    # ─── 3) Mapping M2_ancien → Code famille client ────────────────────────
     map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"]-1,
                                  st.session_state[f"{prefix}_map_val"]-1]].copy()
     map_df.columns = ["M2_ancien", "Code_famille_Client"]
     map_df["M2_ancien"] = to_m2(map_df["M2_ancien"])
     old_df["M2_ancien"] = to_m2(old_df["M2_ancien"])
 
-    merged = (new_df.merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
-                     .merge(map_df, on="M2_ancien", how="left"))
+    # Jointure complète
+    merged = (new_df
+              .merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
+              .merge(map_df, on="M2_ancien", how="left"))
+
+    # Mémorise toutes les colonnes pour le multiselect
     st.session_state["cl_cols"] = list(merged.columns)
 
+    # ─── 4) Table principale + table des codes sans famille ────────────────
     fam = (merged.groupby("M2_nouveau")["Code_famille_Client"]
                  .agg(lambda s: s.value_counts().idxmax()
                       if s.notna().any() else pd.NA)
                  ).reset_index()
 
+    # Codes à compléter
     missing = fam[fam["Code_famille_Client"].isna()].copy()
     if extra_cols:
         keep = [c for c in extra_cols if c in merged.columns]
         missing = missing.merge(merged[["M2_nouveau"] + keep].drop_duplicates(),
                                 on="M2_nouveau", how="left")
+
     return fam, missing
 
 def page_update_m2() -> None:
@@ -227,7 +243,13 @@ def page_update_m2() -> None:
             "new": ("Nouveau plan d'offre",   "Référence produit", "Nouveau code Mach_2"),
             "map": ("Appairage code famille client/Ancien code Mach_2",     "Ancien code Mach2",   "Code famille client"),
         }
-        _uploader_state("cl", LOTS_CL)
+        if (not st.session_state.get("cl_cols")            # pas déjà rempli
+                and st.session_state.get("cl_new_files")):  # fichiers N présents
+            cols_new = []
+            for f in st.session_state["cl_new_files"]:
+                cols_new += read_any(f).columns.tolist()
+            st.session_state["cl_cols"] = sorted(set(cols_new))
+
 
         extra_cols = st.multiselect(
             "Colonnes additionnelles (pour « a_remplir.csv »)",
