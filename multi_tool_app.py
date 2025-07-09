@@ -215,84 +215,87 @@ def _build_appairage(prefix: str,
 
 def page_update_m2() -> None:
     st.header("🔄 Mise à jour des codes Mach_2")
+
+    # Les deux onglets
     tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Classification Code"])
 
-    # ----- Onglet Personal Catalogue -----
-with tab_pc:
-    LOTS_PC = {
-        "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
-        "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
-    }
-    _uploader_state("pc", LOTS_PC)
+    # ------------------------------------------------------------------
+    # 1) Onglet Personal Catalogue
+    # ------------------------------------------------------------------
+    with tab_pc:
+        LOTS_PC = {
+            "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
+            "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
+        }
+        _uploader_state("pc", LOTS_PC)
 
-    if st.button("Générer le fichier"):
-        if not all(st.session_state[f"pc_{k}_files"] for k in LOTS_PC):
-            st.warning("Chargez à la fois les fichiers N‑1 **et** N.")
-            st.stop()
+        if st.button("Générer le fichier"):
+            if not all(st.session_state[f"pc_{k}_files"] for k in LOTS_PC):
+                st.warning("Chargez à la fois les fichiers N‑1 **et** N.")
+                st.stop()
 
-        maj_df = _build_m2_update("pc", LOTS_PC)
-        st.download_button(
-            "⬇️ Télécharger M2_MisAJour.csv",
-            maj_df.to_csv(index=False, sep=";"),
-            file_name=f"M2_MisAJour_{TODAY}.csv",
-            mime="text/csv",
-        )
-        st.dataframe(maj_df.head())
+            maj_df = _build_m2_update("pc", LOTS_PC)
+            st.download_button(
+                "⬇️ Télécharger M2_MisAJour.csv",
+                maj_df.to_csv(index=False, sep=";"),
+                file_name=f"M2_MisAJour_{TODAY}.csv",
+                mime="text/csv",
+            )
+            st.dataframe(maj_df.head())
 
-     # ----- Onglet Appairage client -----
-with tab_cli:
-    LOTS_CL = {
-        "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
-        "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
-        "map": ("Appairage code famille client/Ancien code Mach_2",
-                "Ancien code Mach2", "Code famille client"),
-    }
+    # ------------------------------------------------------------------
+    # 2) Onglet Appairage client
+    # ------------------------------------------------------------------
+    with tab_cli:
+        LOTS_CL = {
+            "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
+            "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
+            "map": ("Appairage code famille client/Ancien code Mach_2",
+                    "Ancien code Mach2", "Code famille client"),
+        }
 
-    # 1) Uploads + aperçus
-    _uploader_state("cl", LOTS_CL)
+        _uploader_state("cl", LOTS_CL)
 
-    # 2) Pré‑renseigne la liste des colonnes du plan N pour le multiselect
-    if (not st.session_state.get("cl_cols")
-            and st.session_state.get("cl_new_files")):
-        cols_new = []
-        for f in st.session_state["cl_new_files"]:
-            cols_new += read_any(f).columns.tolist()
-        st.session_state["cl_cols"] = sorted(set(cols_new))
+        # Pré‑renseigner les colonnes disponibles pour le multiselect
+        if (not st.session_state.get("cl_cols")
+                and st.session_state.get("cl_new_files")):
+            cols_new = []
+            for f in st.session_state["cl_new_files"]:
+                cols_new += read_any(f).columns.tolist()
+            st.session_state["cl_cols"] = sorted(set(cols_new))
 
-    # 3) Choix des colonnes à ajouter dans « a_remplir.csv »
-    extra_cols = st.multiselect(
-        "Colonnes additionnelles (pour « a_remplir.csv »)",
-        options=st.session_state.get("cl_cols", []),
-    )
-
-    # 4) Génération des fichiers
-    if st.button("Générer : fichiers d’appairage"):
-        if not all(st.session_state[f"cl_{k}_files"] for k in LOTS_CL):
-            st.warning("Chargez les **3** jeux de données (N‑1, N, Mapping).")
-            st.stop()
-
-        if (st.session_state["cl_old_ref"] == st.session_state["cl_old_val"] or
-            st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
-            st.error("« Ref produit » et « M2 » doivent être deux colonnes différentes.")
-            st.stop()
-
-        appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
-
-        st.download_button(
-            "⬇️ appairage_M2_famille.csv",
-            appair_df.to_csv(index=False, sep=";"),
-            file_name=f"appairage_M2_CodeFamilleClient_{TODAY}.csv",
-            mime="text/csv",
+        extra_cols = st.multiselect(
+            "Colonnes additionnelles (pour « a_remplir.csv »)",
+            options=st.session_state.get("cl_cols", []),
         )
 
-        st.download_button(
-            "⬇️ a_remplir.csv",
-            missing_df.to_csv(index=False, sep=";"),
-            file_name=f"a_remplir_{TODAY}.csv",
-            mime="text/csv",
-        )
+        if st.button("Générer : fichiers d’appairage"):
+            if not all(st.session_state[f"cl_{k}_files"] for k in LOTS_CL):
+                st.warning("Chargez les **3** jeux de données (N‑1, N, Mapping).")
+                st.stop()
 
-        st.dataframe(appair_df.head())
+            if (st.session_state["cl_old_ref"] == st.session_state["cl_old_val"] or
+                st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
+                st.error("« Ref produit » et « M2 » doivent être deux colonnes différentes.")
+                st.stop()
+
+            appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
+
+            st.download_button(
+                "⬇️ appairage_M2_famille.csv",
+                appair_df.to_csv(index=False, sep=";"),
+                file_name=f"appairage_M2_CodeFamilleClient_{TODAY}.csv",
+                mime="text/csv",
+            )
+
+            st.download_button(
+                "⬇️ a_remplir.csv",
+                missing_df.to_csv(index=False, sep=";"),
+                file_name=f"a_remplir_{TODAY}.csv",
+                mime="text/csv",
+            )
+
+            st.dataframe(appair_df.head())
 
 # ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
 def page_classification():
