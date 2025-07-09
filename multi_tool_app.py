@@ -237,36 +237,46 @@ def page_update_m2() -> None:
             st.dataframe(maj_df.head())
 
     # ----- Onglet Appairage client -----
+        # ----- Onglet Appairage client -----
     with tab_cli:
         LOTS_CL = {
             "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
-            "new": ("Nouveau plan d'offre",   "Référence produit", "Nouveau code Mach_2"),
-            "map": ("Appairage code famille client/Ancien code Mach_2",     "Ancien code Mach2",   "Code famille client"),
+            "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
+            "map": ("Appairage code famille client/Ancien code Mach_2",
+                    "Ancien code Mach2", "Code famille client"),
         }
-        if (not st.session_state.get("cl_cols")            # pas déjà rempli
-                and st.session_state.get("cl_new_files")):  # fichiers N présents
+
+        # 1) Uploads + aperçus (crée toutes les clés cl_* dans session_state)
+        _uploader_state("cl", LOTS_CL)
+
+        # 2) Pré‑renseigne la liste des colonnes du plan N (2025) pour le multiselect
+        if (not st.session_state.get("cl_cols")           # pas déjà fait
+                and st.session_state.get("cl_new_files")): # fichiers N présents
             cols_new = []
             for f in st.session_state["cl_new_files"]:
                 cols_new += read_any(f).columns.tolist()
             st.session_state["cl_cols"] = sorted(set(cols_new))
 
-
+        # 3) Choix des colonnes d’info à inclure dans a_remplir.csv
         extra_cols = st.multiselect(
             "Colonnes additionnelles (pour « a_remplir.csv »)",
             options=st.session_state.get("cl_cols", []),
         )
 
+        # 4) Bouton de génération
         if st.button("Générer : fichiers d’appairage"):
+            # Vérifs de présence des trois lots
             if not all(st.session_state[f"cl_{k}_files"] for k in LOTS_CL):
                 st.warning("Chargez les **3** jeux de données (N‑1, N, Mapping).")
                 st.stop()
 
-            # Garde‑fou : indices identiques
+            # Garde‑fou : index Réf ≠ index M2
             if (st.session_state["cl_old_ref"] == st.session_state["cl_old_val"] or
                 st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
                 st.error("« Ref produit » et « M2 » doivent être deux colonnes différentes.")
                 st.stop()
 
+            # Construction + exports
             appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
             st.download_button("⬇️ appairage_M2_famille.csv",
                                appair_df.to_csv(index=False, sep=";"),
