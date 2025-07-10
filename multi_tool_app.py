@@ -180,11 +180,17 @@ def _build_appairage(prefix: str,
     # ─── 2) Plan N (2025) : on garde TOUTES les colonnes + normalisation M2 ─
     ref_i_new = st.session_state[f"{prefix}_new_ref"] - 1
     m2_i_new  = st.session_state[f"{prefix}_new_val"] - 1
-
+    
     new_full = dfs["new"].copy()
-    new_full.insert(0, "Ref", new_full.iloc[:, ref_i_new])
-    new_full.insert(1, "M2_nouveau", new_full.iloc[:, m2_i_new])
-    new_full["M2_nouveau"] = to_m2(new_full["M2_nouveau"])
+    
+    # On extrait les bonnes colonnes AVANT d’insérer quoi que ce soit
+    ref_series = new_full.iloc[:, ref_i_new].astype(str).str.strip()
+    m2_series  = new_full.iloc[:, m2_i_new]
+    
+    # Maintenant on peut ajouter sans risque de décalage
+    new_full.insert(0, "Ref", ref_series)
+    new_full.insert(1, "M2_nouveau", to_m2(m2_series))
+
     new_df = new_full  # alias lisible
 
     # ─── 3) Mapping M2_ancien → Code famille client ────────────────────────
