@@ -368,7 +368,7 @@ def page_update_m2() -> None:
         LOTS_CL = {
             "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
             "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
-            "map": ("Appairage code famille client/Ancien code Mach_2",
+            "map": ("Appairage Client",
                     "Ancien code Mach2", "Code famille client"),
         }
 
@@ -676,7 +676,7 @@ def page_multiconnexion():
     integration_type = st.radio("Type d’intégration", ["cXML", "OCI"], horizontal=True)
 
     st.markdown(
-        "Télécharger le modèle, le compléter, puis téléverser le fichier.  \n"
+        "Télécharger le modèle, le compléter, puis uploader le fichier.  \n"
         "Colonnes requises : **Numéro de compte** (7 chiffres), **Raison sociale**, "
         "**Adresse**, **Code d'agence** (4 chiffres)."
     )
@@ -897,15 +897,15 @@ def generator_pc():
 # ─────────────────────────  MISE À JOUR M2 (avant génération PC) ─────────────────────────
 
 def generator_maj_m2():
-    st.subheader("Mise à jour M2 avant génération")
+    st.subheader("Mise à jour Mach_2 avant génération")
 
     codes_file = st.file_uploader("📄 Codes produit", type=("csv", "xlsx", "xls"))
-    col_idx_codes = st.number_input("🔢 Colonne Codes M2", 1, 50, 1) if codes_file else None
+    col_idx_codes = st.number_input("🔢 Colonne Codes Mach_2", 1, 50, 1) if codes_file else None
 
     compte_file = st.file_uploader("📄 Numéros de compte", type=("csv", "xlsx", "xls"))
     col_idx_comptes = st.number_input("🔢 Colonne comptes (1=A)", 1, 50, 1) if compte_file else None
 
-    map_file = st.file_uploader("📄 Fichier M2_MisAJour", type=("csv", "xlsx", "xls"))
+    map_file = st.file_uploader("📄 Fichier Mach_2_MisAJour", type=("csv", "xlsx", "xls"))
     if map_file:
         col_idx_old = st.number_input("🔢 Colonne M2 ancien", 1, 50, 1)
         col_idx_new = st.number_input("🔢 Colonne M2 nouveau", 1, 50, 2)
@@ -963,8 +963,8 @@ def generator_maj_m2():
 
 
 def page_dfrx_pc():
-    st.header("🛠️ Générateur PC + Mise à jour M2")
-    nav = st.radio("Choisir l’outil", ["Générateur PC", "Mise à jour M2"], horizontal=True)
+    st.header("🛠️ Personal Catalogue")
+    nav = st.radio("Choisir l’outil", ["Sans Mise à jour Mach_2", "Avec Mise à jour Mach_2"], horizontal=True)
     (generator_pc if nav == "Générateur PC" else generator_maj_m2)()
 
 # ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
