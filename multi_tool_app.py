@@ -495,17 +495,162 @@ def to_xlsx(df: pd.DataFrame) -> bytes:
     return buf.getvalue()
 
 
-def build_tables(df_src: pd.DataFrame) -> List[pd.DataFrame]:
+# ───────────────────────── Helper adresse → dict ────────────────────
+def split_address(addr: str) -> dict:
     """
-    Version « passe-partout » : on renvoie six DataFrame – un par PF –,
-    chacun étant une copie du fichier source déjà nettoyé par l’écran
-    Multiconnexion (Numéro de compte à 7 chiffres, ManagingBranch à 4 chiffres).
+    Utilise libpostal si dispo ; sinon, découpe grossièrement « num voie, CP ville ».
+    Renvoie toujours un dict : num, voie, cp, ville, pays.
+    """
+    parts = {"num": "", "voie": "", "cp": "", "ville": "", "pays": "FR"}
+    if USE_POSTAL:                          # libpostal présent
+        for val, label in parse_address(addr or ""):
+            if label == "house_number":
+                parts["num"] = val
+            elif label in {"road", "footway", "path"}:
+                parts["voie"] = val
+            elif label == "postcode":
+                parts["cp"] = val
+            elif label in {"city", "town", "village", "suburb"}:
+                parts["ville"] = val
+            elif label == "country":
+                parts["pays"] = val
+    else:                                   # fallback très simple
+        import re
+        m = re.match(r"\s*(\d+)\s+([^,]+),?\s+(\d{5})\s+(.+)", addr or "")
+        if m:
+            parts["num"], parts["voie"], parts["cp"], parts["ville"] = m.groups()
+    return parts
 
-    Cela suffit à lever l’exception et à générer les PF 1 → 5
-    (et PF 6 si l’intégration est cXML).  À personnaliser ensuite !
+
+def build_tables(
+    df_src: pd.DataFrame,
+    *,
+    entreprise: str,
+    view_master_catalog: str,
+    punchout_user_id: str,
+    domain: str,
+    identity: str,
+    integration_type: str = "OCI",   # ou "cXML"
+) -> list[pd.DataFrame]:
     """
-    # On fabrique 6 copies indépendantes
-    return [df_src.copy() for _ in range(6)]
+    Construit PF1 → PF5 (+ PF6 si cXML) au format attendu.
+    Le DataFrame d’entrée (`df_src`) doit déjà contenir les colonnes
+    « Numéro de compte », « Raison sociale », « Adresse », « ManagingBranch ».
+    """
+    # ---- PF1
+    pf1_cols = [
+        "uid", "name", "locName",
+        "CXmIAssignedConfiguration",
+        "pcCompoundProfile",
+        "ViewMasterCatalog",
+    ]
+    pf1 = pd.DataFrame(columns=pf1_cols)
+
+    # ---- PF2
+    pf2_cols = [
+        "B2B Unit",
+        "ADRESSE / Numéro de rue",
+        "ADRESSE / rue",
+        "ADRESSEE Code postal",
+        "ADRESSE / Ville",
+        "ADRESSE / Pays/Région",
+        "INFORMATIONS D'ADRESSE SUPPLÉMENTAIRES / Téléphone 1",
+    ]
+    pf2 = pd.DataFrame(columns=pf2_cols)
+
+    # ---- PF3
+    pf3_cols = [
+        "B2BUnitID",
+        "itemtype",
+        "managingBranches",
+        "punchoutUserID",
+        "sealed",
+    ]
+    pf3 = pd.DataFrame(columns=pf3_cols)
+
+    # ---- PF4
+    pf4_cols = [
+        "aliasName",
+        "branch",
+        "punchoutUserID",
+        "sealed",
+    ]
+    pf4 = pd.DataFrame(columns=pf4_cols)
+
+    # ---- PF5
+    pf5_cols = ["B2BUnitID", "punchoutUserID"]
+    pf5 = pd.DataFrame(columns=pf5_cols)
+
+    # ---- PF6 (seulement si cXML)
+    pf6_cols = ["number", "domain", "identity"]
+    pf6 = pd.DataFrame(columns=pf6_cols)
+
+    sealed_val = "false"
+
+    for _, row in df_src.iterrows():
+        account   = row["Numéro de compte"]
+        company   = row["Raison sociale"]
+        full_addr = row["Adresse"]
+        branch    = row["ManagingBranch"]
+
+        # ---- PF1
+        pf1.loc[len(pf1)] = [
+            account,
+            company,
+            full_addr,
+            f"frx-variant-{entreprise}-configuration-set",
+            f"PC_{entreprise}",
+            view_master_catalog,
+        ]
+
+        # ---- PF2
+        addr = split_address(full_addr)
+        pf2.loc[len(pf2)] = [
+            account,
+            addr["num"],
+            addr["voie"],
+            addr["cp"],
+            addr["ville"],
+            addr["pays"],
+            "",
+        ]
+
+        # ---- PF3
+        pf3.loc[len(pf3)] = [
+            account,
+            "PunchoutAccountAndBranchAssociation",
+            branch,
+            punchout_user_id,
+            sealed_val,
+        ]
+
+        # ---- PF4
+        pf4.loc[len(pf4)] = [
+            branch,
+            branch,
+            punchout_user_id,
+            sealed_val,
+        ]
+
+        # ---- PF5
+        pf5.loc[len(pf5)] = [
+            account,
+            punchout_user_id,
+        ]
+
+        # ---- PF6
+        if integration_type == "cXML":
+            pf6.loc[len(pf6)] = [
+                account,
+                domain,
+                identity,
+            ]
+
+    tables = [pf1, pf2, pf3, pf4, pf5]
+    if integration_type == "cXML":
+        tables.append(pf6)
+
+    return tables
 
 
 
