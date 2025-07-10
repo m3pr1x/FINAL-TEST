@@ -201,6 +201,13 @@ def _build_appairage(prefix: str,
 
     # Mémorise toutes les colonnes pour le multiselect
     st.session_state["cl_cols"] = list(merged.columns)
+    with st.expander("🔎 DEBUG – aperçu de merged", expanded=True):
+        st.dataframe(merged.head(30))
+        st.write("Nb lignes :", len(merged))
+        st.write("Nb M2_ancien non NA :", merged['M2_ancien'].notna().sum())
+        st.write("Nb Code_famille_Client non NA :", merged['Code_famille_Client'].notna().sum())
+
+                         
 
     # ─── 4) Table principale + table des codes sans famille ────────────────
     fam = (merged.groupby("M2_nouveau")["Code_famille_Client"]
