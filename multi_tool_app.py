@@ -198,7 +198,7 @@ def _add_cols(df: pd.DataFrame, ref_i: int, m2_i: int,
 
 
 def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.DataFrame:
-    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"],],
+    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
                         ignore_index=True).drop_duplicates()
            for k in lots}
 
