@@ -728,7 +728,16 @@ def page_multiconnexion():
             st.error("Numéro de compte ou ManagingBranch invalide(s).")
             st.stop()
 
-        tables = build_tables(df_src)  # votre logique métier
+        tables = build_tables(
+    df_src,
+    entreprise=entreprise,
+    view_master_catalog=vm_choice,       # "True" ou "False"
+    punchout_user_id=punchout_user,
+    domain=domain,                       # "NetworkID" ou "DUNS"
+    identity=identity,
+    integration_type=integration_type,   # "OCI" ou "cXML"
+)
+  # votre logique métier
 
         file_map = {
             "PF1": f"B2B Units creation_{entreprise}.xlsx",
