@@ -223,7 +223,7 @@ def _build_appairage(prefix: str,
                      lots: dict[str, tuple[str, str, str]],
                      extra_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
     # ─── 0) Lecture + concat ────────────────────────────────────────────────
-    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"],],
+    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
                         ignore_index=True).drop_duplicates()
            for k in lots}
 
