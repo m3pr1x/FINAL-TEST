@@ -859,7 +859,9 @@ PAGES = {
 
 with st.sidebar:
     # ▸ Bouton global de réinitialisation
-    st.button("🔄 Réinitialiser la page", key="reset_page", on_click=reset_page)
+    if st.button("🔄 Réinitialiser la page", key="reset_page_button"):
+        reset_page()
+        st.rerun()
 
     # ▸ Menu de navigation principal
     choice = st.radio(
@@ -869,3 +871,4 @@ with st.sidebar:
 
 # — exécution de la page choisie —
 PAGES[choice]()
+
