@@ -871,4 +871,3 @@ with st.sidebar:
 
 # — exécution de la page choisie —
 PAGES[choice]()
-
