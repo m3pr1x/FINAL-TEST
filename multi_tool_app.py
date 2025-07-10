@@ -7,6 +7,11 @@ Correctifs 07/2025
     • Générateur PC & MàJ M2 : ajout du fichier AFRXHYBRPCP<date>0000.txt
     • Correction d’une parenthèse non fermée (Outlook)
     • Clé 'nav_main' pour le menu (évite DuplicateElementId)
+    • **Bouton « Réinitialiser la page » corrigé** → nouvelle fonction
+      `reset_page()` qui vide `st.session_state` puis appelle `st.rerun()`.
+      Dorénavant :
+          st.button(..., on_click=reset_page)
+      (`st.experimental_rerun()` était déprécié depuis Streamlit ≥ 1.27).
 
 Améliorations 07/2025 — PERSISTANCE DES FICHIERS GÉNÉRÉS
     • Les objets créés (DataFrame / bytes) sont conservés dans st.session_state
@@ -16,7 +21,7 @@ Améliorations 07/2025 — PERSISTANCE DES FICHIERS GÉNÉRÉS
     • Chaque download_button reçoit une key= fixe basée sur le nom de
       fichier, ce qui empêche la recréation de widgets.
     • Un bouton global « 🔄 Réinitialiser la page » est ajouté dans la sidebar ;
-      il exécute st.session_state.clear() puis st.experimental_rerun().
+      il exécute `reset_page()`.
     • Même logique appliquée à toutes les pages génératrices de fichiers :
       Mise à jour M2, Classification Code, Multiconnexion, Personal Catalogue,
       Mise à jour M2 (PC) et CPN.
@@ -141,6 +146,15 @@ def sanitize_numeric(series: pd.Series, width: int) -> Tuple[pd.Series, pd.Serie
     s_pad = s.apply(lambda x: x.zfill(width) if x.isdigit() and len(x) <= width else x)
     bad = ~s_pad.str.fullmatch(fr"\d{{{width}}}")
     return s_pad, bad
+
+# ═══════════════════ BOUTON RÉINITIALISER (FIX) ═══════════════════
+
+def reset_page() -> None:
+    """Vide complètement st.session_state puis relance l’application."""
+    st.session_state.clear()
+    # Utilise désormais l’API stable – `st.rerun()`
+    st.rerun()
+
 
 # ═══════════════════ PAGE 1 – MISE À JOUR M2 (PC & Appairage) ═══════════════════
 
@@ -844,10 +858,10 @@ PAGES = {
 }
 
 with st.sidebar:
-    if st.button("🔄 Réinitialiser la page", key="reset_page"):
-        st.session_state.clear()
-        st.experimental_rerun()
+    # ▸ Bouton global de réinitialisation
+    st.button("🔄 Réinitialiser la page", key="reset_page", on_click=reset_page)
 
+    # ▸ Menu de navigation principal
     choice = st.radio(
         "Navigation", list(PAGES), index=0, key="nav_main",
         label_visibility="collapsed",
@@ -855,4 +869,3 @@ with st.sidebar:
 
 # — exécution de la page choisie —
 PAGES[choice]()
-
