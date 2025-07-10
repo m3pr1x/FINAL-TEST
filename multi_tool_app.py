@@ -496,8 +496,17 @@ def to_xlsx(df: pd.DataFrame) -> bytes:
 
 
 def build_tables(df_src: pd.DataFrame) -> List[pd.DataFrame]:
-    """Placeholder : implémentez votre logique métier ici."""
-    raise NotImplementedError
+    """
+    Version « passe-partout » : on renvoie six DataFrame – un par PF –,
+    chacun étant une copie du fichier source déjà nettoyé par l’écran
+    Multiconnexion (Numéro de compte à 7 chiffres, ManagingBranch à 4 chiffres).
+
+    Cela suffit à lever l’exception et à générer les PF 1 → 5
+    (et PF 6 si l’intégration est cXML).  À personnaliser ensuite !
+    """
+    # On fabrique 6 copies indépendantes
+    return [df_src.copy() for _ in range(6)]
+
 
 
 def create_outlook_draft(att: List[Tuple[str, bytes]],
