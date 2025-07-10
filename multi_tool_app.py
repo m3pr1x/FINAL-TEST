@@ -841,11 +841,10 @@ PAGES = {
     "Personal Catalogue": page_dfrx_pc,
     "CPN": page_cpn,
 }
-
-with st.sidebar:
-    if st.button("🔄 Réinitialiser la page", key="reset_page"):
-        st.session_state.clear()
-        st.experimental_rerun()
+    with st.sidebar:
+        if st.button("🔄 Réinitialiser la page", key="reset_page"):
+            st.session_state.clear()
+            st.experimental_rerun()
 
     choice = st.radio(
         "Navigation", list(PAGES), index=0, key="nav_main",
