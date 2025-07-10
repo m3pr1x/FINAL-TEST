@@ -25,10 +25,17 @@ Améliorations 07/2025 — PERSISTANCE DES FICHIERS GÉNÉRÉS
     • Même logique appliquée à toutes les pages génératrices de fichiers :
       Mise à jour M2, Classification Code, Multiconnexion, Personal Catalogue,
       Mise à jour M2 (PC) et CPN.
+
+Nouveau 07/2025 — **Téléchargement groupé ergonomique**
+    • Dès qu’une section contient au moins un fichier :
+        – champ texte « 📁 Nom du dossier » (pré‑rempli) ;
+        – bouton **📦 Télécharger tous les fichiers** qui livre une
+          archive ZIP `<NomDuDossier>.zip` contenant chaque fichier
+          dans le dossier du même nom.
 """
 
 from __future__ import annotations
-import csv, io, re, tempfile, os, sys
+import csv, io, re, tempfile, os, sys, zipfile
 from datetime import datetime
 from itertools import product
 from typing import Dict, Tuple, List
@@ -79,15 +86,53 @@ def _save_df(section: str, df: pd.DataFrame) -> None:
     st.session_state[f"{section}_df"] = df
 
 
+def _build_zip(files: List[dict], folder_name: str) -> bytes:
+    """Construit une archive ZIP en mémoire contenant <files> dans <folder_name>/..."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for info in files:
+            zf.writestr(os.path.join(folder_name, info["filename"]), info["data"])
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def _render_downloads(section: str) -> None:
-    """Affiche les download_buttons associées à une section (si présentes)."""
-    for info in st.session_state.get(f"{section}_files", []):
+    """
+    Affiche :
+        • champ texte « Nom du dossier » + bouton « 📦 Télécharger tous les fichiers »
+          (si des fichiers existent) ;
+        • boutons individuels pour chaque fichier de la section ;
+        • aperçu DataFrame, le cas échéant, via _render_df().
+    """
+    files = st.session_state.get(f"{section}_files", [])
+    if files:
+        default_name = st.session_state.get(f"{section}_folder_name",
+                                            f"{section}_{TODAY}")
+        folder_name = st.text_input(
+            "📁 Nom du dossier pour le téléchargement groupé",
+            value=default_name,
+            key=f"{section}_folder_input",
+        )
+        st.session_state[f"{section}_folder_name"] = folder_name
+
+        zip_bytes = _build_zip(files, folder_name)
+        st.download_button(
+            "📦 Télécharger tous les fichiers",
+            zip_bytes,
+            file_name=f"{folder_name}.zip",
+            mime="application/zip",
+            key=f"{section}_zip_all",
+        )
+
+        st.markdown("---")
+
+    for info in files:
         st.download_button(
             info["label"],
             info["data"],
             file_name=info["filename"],
             mime=info["mime"],
-            key=f"{section}_{info['filename']}",  # key fixe = section+nom
+            key=f"{section}_{info['filename']}",
         )
 
 
@@ -154,8 +199,6 @@ def reset_page() -> None:
     st.session_state.clear()
     # Utilise désormais l’API stable – `st.rerun()`
     st.rerun()
-
-
 # ═══════════════════ PAGE 1 – MISE À JOUR M2 (PC & Appairage) ═══════════════════
 
 def _preview_file(upload) -> None:
