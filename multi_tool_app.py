@@ -834,6 +834,7 @@ def page_cpn():
     _render_df("cpn")
 
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
+# ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
 PAGES = {
     "Mise à jour M2": page_update_m2,
     "Classification Code": page_classification,
@@ -841,10 +842,11 @@ PAGES = {
     "Personal Catalogue": page_dfrx_pc,
     "CPN": page_cpn,
 }
-    with st.sidebar:
-        if st.button("🔄 Réinitialiser la page", key="reset_page"):
-            st.session_state.clear()
-            st.experimental_rerun()
+
+with st.sidebar:
+    if st.button("🔄 Réinitialiser la page", key="reset_page"):
+        st.session_state.clear()
+        st.experimental_rerun()
 
     choice = st.radio(
         "Navigation", list(PAGES), index=0, key="nav_main",
@@ -853,3 +855,4 @@ PAGES = {
 
 # — exécution de la page choisie —
 PAGES[choice]()
+
