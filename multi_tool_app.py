@@ -727,16 +727,43 @@ def page_multiconnexion():
 
     if st.button("🚀 Générer les fichiers", key="multi_generate"):
         if not all([entreprise, punchout_user, identity, (pc_enabled == "False" or pc_name)]):
-            st.warning("Remplire tous les champs requis.")
+            st.warning("Remplir tous les champs requis.")
             st.stop()
 
+        # --- lecture du fichier uploadé ---
         df_src = read_any(up_file)
+
+        # ---------- INSERTION DU BLOC ROBUSTE ICI ----------
+        # normalise les noms de colonne (trim + lower)
+        norm_map = {c: c.strip().lower() for c in df_src.columns}
+
+        expected = {
+            "Numéro de compte": "numéro de compte",
+            "ManagingBranch":   "managingbranch",
+        }
+
+        missing = [orig for orig, norm in expected.items() if norm not in norm_map.values()]
+        if missing:
+            st.error(f"Colonnes manquantes ou mal orthographiées : {', '.join(missing)}")
+            st.stop()
+
+        # renomme les colonnes aux intitulés officiels
+        for orig, norm in norm_map.items():
+            if norm == "numéro de compte":
+                df_src.rename(columns={orig: "Numéro de compte"}, inplace=True)
+            elif norm == "managingbranch":
+                df_src.rename(columns={orig: "ManagingBranch"}, inplace=True)
+        # ---------- FIN DU BLOC AJOUTÉ ----------
+
+        # (le reste du code ne change pas)
         if {"Numéro de compte", "ManagingBranch"} - set(df_src.columns):
             st.error("Colonnes manquantes dans le fichier.")
             st.stop()
 
         df_src["Numéro de compte"], bad_acc = sanitize_numeric(df_src["Numéro de compte"], 7)
         df_src["ManagingBranch"], bad_man = sanitize_numeric(df_src["ManagingBranch"], 4)
+        ...
+
         if bad_acc.any() or bad_man.any():
             st.error("Numéro de compte ou ManagingBranch invalide(s).")
             st.stop()
