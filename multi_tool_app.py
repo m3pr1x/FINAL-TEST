@@ -686,7 +686,13 @@ def create_outlook_draft(att: List[Tuple[str, bytes]],
 
 def page_multiconnexion():
     st.header("📦 Multiconnexion")
-    integration_type = st.radio("Type d’intégration", ["cXML", "OCI"], horizontal=True)
+
+    # --- 1) Choix du type d’intégration ---
+    integration_type = st.radio(
+        "Type d’intégration",
+        ["cXML", "OCI"],
+        horizontal=True
+    )
 
     st.markdown(
         "Télécharger le modèle, le compléter, puis uploader le fichier.  \n"
@@ -694,91 +700,108 @@ def page_multiconnexion():
         "**Adresse**, **Code d'agence** (4 chiffres)."
     )
 
-    # Template vierge
+    # 2) Template vierge ----------------------------------------------------------------
     with st.expander("📑 Template Multiconnexion.xlsx"):
         cols_tpl = ["Numéro de compte", "Raison sociale", "Adresse", "Code agence"]
         buf_tpl = io.BytesIO()
         pd.DataFrame([{c: "" for c in cols_tpl}]).to_excel(buf_tpl, index=False)
         buf_tpl.seek(0)
-        st.download_button("📥 Télécharger le template", buf_tpl.getvalue(),
-                           file_name="dfrecu_template.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           key="multi_template")
+        st.download_button(
+            "📥 Télécharger le template",
+            buf_tpl.getvalue(),
+            file_name="dfrecu_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="multi_template"
+        )
 
-    up_file = st.file_uploader("📄 Déposer Fichier Multiconnexion", type=("csv", "xlsx", "xls"))
+    # 3) Fichier source -----------------------------------------------------------------
+    up_file = st.file_uploader(
+        "📄 Déposer Fichier Multiconnexion",
+        type=("csv", "xlsx", "xls")
+    )
     if not up_file:
         _render_downloads("multi")
         _render_df("multi")
         st.stop()
 
-    col1, col2, col3 = st.columns(3)
+    # 4) Paramètres d’en‑tête ------------------------------------------------------------
+    col1, col2 = st.columns(2)
     with col1:
-        entreprise = st.text_input("🏢 Entreprise").strip()
+        entreprise   = st.text_input("🏢 Entreprise").strip()
     with col2:
         punchout_user = st.text_input("👤 punchoutUserID")
-    with col3:
-        domain = st.selectbox("🌐 Domain", ["NetworkID", "DUNS"])
 
-    identity = st.text_input("🆔 Identity")
-    vm_choice = st.radio("ViewMasterCatalog", ["True", "False"], horizontal=True)
-    pc_enabled = st.radio("Personal Catalogue ?", ["True", "False"], horizontal=True)
-    pc_name = st.text_input("Nom du catalogue (sans PC_)", placeholder="CATALOGUE").strip() \
-              if pc_enabled == "True" else ""
+    # Domain & Identity uniquement en mode cXML
+    if integration_type == "cXML":
+        col3, col4 = st.columns(2)
+        with col3:
+            domain = st.selectbox("🌐 Domain", ["NetworkID", "DUNS"])
+        with col4:
+            identity = st.text_input("🆔 Identity")
+    else:
+        domain = ""
+        identity = ""
 
+    # Options catalogue perso
+    vm_choice   = st.radio("ViewMasterCatalog", ["True", "False"], horizontal=True)
+    pc_enabled  = st.radio("Personal Catalogue ?", ["True", "False"], horizontal=True)
+    pc_name     = st.text_input(
+        "Nom du catalogue (sans PC_)",
+        placeholder="CATALOGUE"
+    ).strip() if pc_enabled == "True" else ""
+
+    # 5) Bouton génération ---------------------------------------------------------------
     if st.button("🚀 Générer les fichiers", key="multi_generate"):
-        if not all([entreprise, punchout_user, identity, (pc_enabled == "False" or pc_name)]):
+
+        # Champs requis selon le mode
+        base_required = [entreprise, punchout_user, (pc_enabled == "False" or pc_name)]
+        cx_required   = [domain, identity] if integration_type == "cXML" else []
+        if not all(base_required + cx_required):
             st.warning("Remplir tous les champs requis.")
             st.stop()
 
-        # --- lecture du fichier uploadé ---
+        # --- Lecture + normalisation colonnes ---
         df_src = read_any(up_file)
 
-        # ---------- INSERTION DU BLOC ROBUSTE ICI ----------
-        # normalise les noms de colonne (trim + lower)
+        # tolérance casse / espaces
         norm_map = {c: c.strip().lower() for c in df_src.columns}
-
         expected = {
             "Numéro de compte": "numéro de compte",
             "ManagingBranch":   "managingbranch",
         }
-
-        missing = [orig for orig, norm in expected.items() if norm not in norm_map.values()]
+        missing = [
+            orig for orig, norm in expected.items() if norm not in norm_map.values()
+        ]
         if missing:
-            st.error(f"Colonnes manquantes ou mal orthographiées : {', '.join(missing)}")
+            st.error(f"Colonnes manquantes ou mal orthographiées : {', '.join(missing)}")
             st.stop()
 
-        # renomme les colonnes aux intitulés officiels
+        # Renomme les colonnes pour la suite
         for orig, norm in norm_map.items():
             if norm == "numéro de compte":
                 df_src.rename(columns={orig: "Numéro de compte"}, inplace=True)
             elif norm == "managingbranch":
                 df_src.rename(columns={orig: "ManagingBranch"}, inplace=True)
-        # ---------- FIN DU BLOC AJOUTÉ ----------
 
-        # (le reste du code ne change pas)
-        if {"Numéro de compte", "ManagingBranch"} - set(df_src.columns):
-            st.error("Colonnes manquantes dans le fichier.")
-            st.stop()
-
+        # --- Contrôles format compte / branche ---
         df_src["Numéro de compte"], bad_acc = sanitize_numeric(df_src["Numéro de compte"], 7)
-        df_src["ManagingBranch"], bad_man = sanitize_numeric(df_src["ManagingBranch"], 4)
-        ...
-
+        df_src["ManagingBranch"], bad_man   = sanitize_numeric(df_src["ManagingBranch"], 4)
         if bad_acc.any() or bad_man.any():
             st.error("Numéro de compte ou ManagingBranch invalide(s).")
             st.stop()
 
+        # --- Construction des tables PF ---
         tables = build_tables(
-    df_src,
-    entreprise=entreprise,
-    view_master_catalog=vm_choice,       # "True" ou "False"
-    punchout_user_id=punchout_user,
-    domain=domain,                       # "NetworkID" ou "DUNS"
-    identity=identity,
-    integration_type=integration_type,   # "OCI" ou "cXML"
-)
-  # votre logique métier
+            df_src,
+            entreprise=entreprise,
+            view_master_catalog=vm_choice,
+            punchout_user_id=punchout_user,
+            domain=domain,
+            identity=identity,
+            integration_type=integration_type,
+        )
 
+        # --- Export XLSX + boutons ---
         file_map = {
             "PF1": f"B2B Units creation_{entreprise}.xlsx",
             "PF2": f"Table_chargement_adresse_{entreprise}.xlsx",
@@ -787,28 +810,33 @@ def page_multiconnexion():
             "PF5": f"Table_Attach_B2BUnitstoUsers_{entreprise}.xlsx",
             "PF6": f"PunchoutAccountSetup_{entreprise}.xlsx",
         }
+        labels = ["PF1", "PF2", "PF3", "PF4", "PF5"] + (
+            ["PF6"] if integration_type == "cXML" else []
+        )
 
-        labels = ["PF1", "PF2", "PF3", "PF4", "PF5"] + (["PF6"] if integration_type == "cXML" else [])
-        files_bytes: Dict[str, bytes] = {}
         for lbl, df in zip(labels, tables):
-            fname = file_map[lbl]
             data = to_xlsx(df)
-            files_bytes[fname] = data
-            _save_file("multi", f"⬇️ {lbl}", data, fname,
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
+            _save_file(
+                "multi",
+                f"⬇️ {lbl}",
+                data,
+                file_map[lbl],
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
         _save_df("multi", tables[0])
 
     _render_downloads("multi")
     _render_df("multi")
 
-    # Option Outlook (toujours affichée après les boutons persistants)
+    # 6) Option Outlook ------------------------------------------------------------------
     if IS_OUTLOOK and st.session_state.get("multi_files"):
         st.markdown("---")
         dest = st.text_input("Destinataire (Outlook)")
         if st.button("Ouvrir un brouillon Outlook", key="multi_outlook"):
             subj = f"Fichiers PF – {entreprise} ({datetime.now():%Y-%m-%d %H:%M})"
-            files_att = [(info["filename"], info["data"]) for info in st.session_state["multi_files"]]
+            files_att = [
+                (info["filename"], info["data"]) for info in st.session_state["multi_files"]
+            ]
             create_outlook_draft(files_att, to_=dest, subject=subj)
             st.success("Brouillon Outlook ouvert.")
     elif not IS_OUTLOOK:
