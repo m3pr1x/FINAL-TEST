@@ -981,12 +981,12 @@ def page_dfrx_pc():
         generator_maj_m2()
 
 # ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
-
 def page_cpn():
     st.header("📑 CPN")
 
     colA, colB = st.columns(2)
 
+    # ─── Upload fichiers ───
     with colA:
         main_file = st.file_uploader(
             "📄 Appairage Code produit client / Référence interne",
@@ -1003,6 +1003,7 @@ def page_cpn():
         if cli_file:
             _preview_file(cli_file)
 
+    # ─── Validation présence fichiers ───
     if not (main_file and cli_file):
         _render_downloads("cpn")
         _render_df("cpn")
@@ -1011,26 +1012,26 @@ def page_cpn():
     df_main = read_any(main_file)
     df_cli  = read_any(cli_file)
 
-    max_cols_main = len(df_main.columns)
-    max_cols_cli  = len(df_cli.columns)
-
+    # ─── Sélection index colonnes ───
     col_int = st.selectbox(
         "Colonne Référence produit interne",
-        range(1, max_cols_main + 1),
+        range(1, len(df_main.columns) + 1),
         index=0
     )
     col_cli_prod = st.selectbox(
         "Colonne Code produit client",
-        range(1, max_cols_main + 1),
-        index=1 if max_cols_main > 1 else 0
+        range(1, len(df_main.columns) + 1),
+        index=1 if len(df_main.columns) > 1 else 0
     )
     col_cli_acc = st.selectbox(
         "Colonne Numéro de compte client (périmètre)",
-        range(1, max_cols_cli + 1),
+        range(1, len(df_cli.columns) + 1),
         index=0
     )
 
+    # ─── Génération CPN ───
     if st.button("🚀 Générer CPN", key="cpn_generate"):
+        # -- extraction & contrôles --
         series_int = df_main.iloc[:, col_int - 1].astype(str).str.strip()
         if (~series_int.str.fullmatch(r"\d{8}")).any():
             st.error("Réf. interne invalide : doit contenir exactement 8 chiffres.")
@@ -1040,13 +1041,19 @@ def page_cpn():
         series_cli_prod = df_main.iloc[:, col_cli_prod - 1].astype(str).str.strip()
         series_cli_acc  = df_cli.iloc[:,  col_cli_acc  - 1].astype(str).str.strip()
 
+        # -- produit cartésien InternalItemID × AccountNumber --
         pf = pd.DataFrame(
             product(series_int, series_cli_acc),
-            columns=["1", "2"]
+            columns=["InternalItemID", "AccountNumber"]
         )
-        pf["3"] = series_cli_prod.repeat(len(series_cli_acc)).values
+        # -- ajout CustomerItemId --
+        pf["CustomerItemId"] = series_cli_prod.repeat(len(series_cli_acc)).values
 
-        today = TODAY
+        # -- ré‑ordonnage colonnes : CustomerItemId, AccountNumber, InternalItemID --
+        df_out = pf[["CustomerItemId", "AccountNumber", "InternalItemID"]]
+
+        # -- nomenclature fichiers --
+        today     = TODAY
         dfrx_name = f"DFRXHYBCPNA{today}0000"
         afrx_name = f"AFRXHYBCPNA{today}0000"
 
@@ -1055,16 +1062,20 @@ def page_cpn():
             f"DFRXHYBCPNA{today}CPNAHYBFRX                    OK000000"
         )
 
-        _save_df("cpn", pf)
-        _save_file("cpn", "⬇️ DFRX (TSV)",
-                   pf.to_csv(sep="\t", index=False, header=False).encode(),
-                   dfrx_name, "text/tab-separated-values")
-        _save_file("cpn", "⬇️ AFRX (TXT)",
-                   ack_txt,
-                   afrx_name, "text/plain")
+        # -- sauvegarde & boutons download --
+        _save_df("cpn", df_out)
+        _save_file(
+            "cpn",
+            "⬇️ DFRX (TSV)",
+            df_out.to_csv(sep="\t", index=False, header=False).encode(),
+            dfrx_name,
+            "text/tab-separated-values"
+        )
+        _save_file("cpn", "⬇️ AFRX (TXT)", ack_txt, afrx_name, "text/plain")
 
     _render_downloads("cpn")
     _render_df("cpn")
+
 
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
