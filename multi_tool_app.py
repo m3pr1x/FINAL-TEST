@@ -509,17 +509,22 @@ def to_xlsx(df: pd.DataFrame) -> bytes:
 
 
 # ───────────────────────── Helper adresse → dict ────────────────────
+# ───────────────────────── Helper adresse → dict ────────────────────
 def split_address(addr: str) -> dict:
     """
-    Utilise libpostal si dispo ; sinon, découpe grossièrement « num voie, CP ville ».
+    Tente d’analyser l’adresse.
+    1) Utilise libpostal si disponible.
+    2) Sinon, regex tolérante : prend en charge « 10 bis rue X, 75000 Paris »,
+       « 10bis rue X 75000 PARIS », etc.
     Renvoie toujours un dict : num, voie, cp, ville, pays.
     """
     parts = {"num": "", "voie": "", "cp": "", "ville": "", "pays": "FR"}
-    if USE_POSTAL:                          # libpostal présent
+
+    if USE_POSTAL:                                  # libpostal disponible
         for val, label in parse_address(addr or ""):
             if label == "house_number":
                 parts["num"] = val
-            elif label in {"road", "footway", "path"}:
+            elif label in {"road", "pedestrian", "path", "footway"}:
                 parts["voie"] = val
             elif label == "postcode":
                 parts["cp"] = val
@@ -527,11 +532,27 @@ def split_address(addr: str) -> dict:
                 parts["ville"] = val
             elif label == "country":
                 parts["pays"] = val
-    else:                                   # fallback très simple
-        import re
-        m = re.match(r"\s*(\d+)\s+([^,]+),?\s+(\d{5})\s+(.+)", addr or "")
-        if m:
-            parts["num"], parts["voie"], parts["cp"], parts["ville"] = m.groups()
+        return parts
+
+    # -------- Fallback regex amélioré --------
+    import re
+    pattern = re.compile(
+        r"""
+        ^\s*
+        (?P<num>[\d\w\-]*)          # numéro : 10, 10B, 5-7, etc. (facultatif)
+        \s*
+        (?P<voie>[^,]+?)            # libellé de voie jusqu'à virgule ou CP
+        [,\s]+
+        (?P<cp>\d{2}\s?\d{3})       # code postal (75008 ou 75 008)
+        \s+
+        (?P<ville>.+?)              # ville
+        \s*$
+        """,
+        re.VERBOSE | re.IGNORECASE,
+    )
+    m = pattern.match(addr or "")
+    if m:
+        parts.update(m.groupdict())
     return parts
 
 
@@ -580,7 +601,8 @@ def build_tables(
     for _, row in df_src.iterrows():
         account   = row["Numéro de compte"]
         company   = row["Raison sociale"]
-        full_addr = row["Adresse"]
+        full_addr = (row["Adresse"] or "").strip()  # <-- trim pour éviter NaN/espaces
+
         branch    = row["Code agence"]      # ← remplace ManagingBranch
 
         # PF1 : locName == name (plus d'adresse)
