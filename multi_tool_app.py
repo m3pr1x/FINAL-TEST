@@ -782,7 +782,7 @@ def generator_pc_common(codes: pd.Series, entreprise: str, statut: str) -> pd.Da
         1: [statut] * len(codes),
         2: [None] * len(codes),
         3: [f"M2_{c}" for c in codes],
-        4: ["frxProductCatallog:Online"] * len(codes),
+        4: ["frxProductCatalog:Online"] * len(codes),
     }).drop_duplicates()
 
 
@@ -829,8 +829,9 @@ def export_pc_files(section: str, df1: pd.DataFrame,
 def generator_pc():
     st.subheader("Personal Catalogue")
 
+    # ⬇️ ancien : "📄 Codes produit"
     codes_file = st.file_uploader(
-        "📄 Déposer le Fichier des codes Mach_2 (CSV / Excel)",
+        "📄 Fichier contenant la colonne Mach_2 (CSV / Excel)",
         type=("csv", "xlsx", "xls"),
         key="pc_codes",
     )
@@ -899,7 +900,10 @@ def generator_pc():
 def generator_maj_m2():
     st.subheader("Mise à jour Mach_2 avant génération")
 
-    codes_file = st.file_uploader("📄 Codes produit", type=("csv", "xlsx", "xls"))
+    # ⬇️ ancien : "📄 Codes produit"
+    codes_file = st.file_uploader(
+        "📄 Fichier contenant la colonne Mach_2 (CSV / Excel)",
+        type=("csv", "xlsx", "xls")
     col_idx_codes = st.number_input("🔢 Colonne Codes Mach_2", 1, 50, 1) if codes_file else None
 
     compte_file = st.file_uploader("📄 Numéros de compte", type=("csv", "xlsx", "xls"))
@@ -962,10 +966,19 @@ def generator_maj_m2():
     _render_df("majm2")
 
 
+# ───────── page_dfrx_pc : navigation corrigée ─────────
 def page_dfrx_pc():
     st.header("🛠️ Personal Catalogue")
-    nav = st.radio("Choisir l’outil", ["Sans Mise à jour Mach_2", "Avec Mise à jour Mach_2"], horizontal=True)
-    (generator_pc if nav == "Générateur PC" else generator_maj_m2)()
+    nav = st.radio(
+        "Choisir l’outil",
+        ["Sans mise à jour Mach_2", "Avec mise à jour Mach_2"],
+        horizontal=True
+    )
+
+    if nav == "Sans mise à jour Mach_2":
+        generator_pc()
+    else:
+        generator_maj_m2()
 
 # ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
 
