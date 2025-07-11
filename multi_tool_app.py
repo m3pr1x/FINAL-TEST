@@ -547,56 +547,33 @@ def build_tables(
 ) -> list[pd.DataFrame]:
     """
     Construit PF1 → PF5 (+ PF6 si cXML) au format attendu.
-    Le DataFrame d’entrée (`df_src`) doit déjà contenir les colonnes
-    « Numéro de compte », « Raison sociale », « Adresse », « ManagingBranch ».
+    Le DataFrame d’entrée doit contenir :
+        « Numéro de compte », « Raison sociale », « Adresse », « Code agence ».
     """
-    # ---- PF1
     pf1_cols = [
         "uid", "name", "locName",
         "CXmIAssignedConfiguration",
         "pcCompoundProfile",
         "ViewMasterCatalog",
     ]
-    pf1 = pd.DataFrame(columns=pf1_cols)
-
-    # ---- PF2
     pf2_cols = [
         "B2B Unit",
-        "ADRESSE / Numéro de rue",
-        "ADRESSE / rue",
-        "ADRESSEE Code postal",
-        "ADRESSE / Ville",
+        "ADRESSE / Numéro de rue", "ADRESSE / rue",
+        "ADRESSE / Code postal",   "ADRESSE / Ville",
         "ADRESSE / Pays/Région",
         "INFORMATIONS D'ADRESSE SUPPLÉMENTAIRES / Téléphone 1",
     ]
-    pf2 = pd.DataFrame(columns=pf2_cols)
-
-    # ---- PF3
-    pf3_cols = [
-        "B2BUnitID",
-        "itemtype",
-        "managingBranches",
-        "punchoutUserID",
-        "sealed",
-    ]
-    pf3 = pd.DataFrame(columns=pf3_cols)
-
-    # ---- PF4
-    pf4_cols = [
-        "aliasName",
-        "branch",
-        "punchoutUserID",
-        "sealed",
-    ]
-    pf4 = pd.DataFrame(columns=pf4_cols)
-
-    # ---- PF5
+    pf3_cols = ["B2BUnitID", "itemtype", "managingBranches", "punchoutUserID", "sealed"]
+    pf4_cols = ["aliasName", "branch", "punchoutUserID", "sealed"]
     pf5_cols = ["B2BUnitID", "punchoutUserID"]
-    pf5 = pd.DataFrame(columns=pf5_cols)
-
-    # ---- PF6 (seulement si cXML)
     pf6_cols = ["number", "domain", "identity"]
-    pf6 = pd.DataFrame(columns=pf6_cols)
+
+    pf1 = pd.DataFrame(columns=pf1_cols)
+    pf2 = pd.DataFrame(columns=pf2_cols)
+    pf3 = pd.DataFrame(columns=pf3_cols)
+    pf4 = pd.DataFrame(columns=pf4_cols)
+    pf5 = pd.DataFrame(columns=pf5_cols)
+    pf6 = pd.DataFrame(columns=pf6_cols)  # utilisé seulement en cXML
 
     sealed_val = "false"
 
@@ -604,31 +581,26 @@ def build_tables(
         account   = row["Numéro de compte"]
         company   = row["Raison sociale"]
         full_addr = row["Adresse"]
-        branch    = row["ManagingBranch"]
+        branch    = row["Code agence"]      # ← remplace ManagingBranch
 
-        # ---- PF1
+        # PF1 : locName == name (plus d'adresse)
         pf1.loc[len(pf1)] = [
             account,
             company,
-            full_addr,
+            company,                        # locName = company
             f"frx-variant-{entreprise}-configuration-set",
             f"PC_{entreprise}",
             view_master_catalog,
         ]
 
-        # ---- PF2
+        # PF2 : adresse détaillée
         addr = split_address(full_addr)
         pf2.loc[len(pf2)] = [
-            account,
-            addr["num"],
-            addr["voie"],
-            addr["cp"],
-            addr["ville"],
-            addr["pays"],
-            "",
+            account, addr["num"], addr["voie"],
+            addr["cp"], addr["ville"], addr["pays"], ""
         ]
 
-        # ---- PF3
+        # PF3
         pf3.loc[len(pf3)] = [
             account,
             "PunchoutAccountAndBranchAssociation",
@@ -637,7 +609,7 @@ def build_tables(
             sealed_val,
         ]
 
-        # ---- PF4
+        # PF4
         pf4.loc[len(pf4)] = [
             branch,
             branch,
@@ -645,27 +617,17 @@ def build_tables(
             sealed_val,
         ]
 
-        # ---- PF5
-        pf5.loc[len(pf5)] = [
-            account,
-            punchout_user_id,
-        ]
+        # PF5
+        pf5.loc[len(pf5)] = [account, punchout_user_id]
 
-        # ---- PF6
+        # PF6 (cXML uniquement)
         if integration_type == "cXML":
-            pf6.loc[len(pf6)] = [
-                account,
-                domain,
-                identity,
-            ]
+            pf6.loc[len(pf6)] = [account, domain, identity]
 
     tables = [pf1, pf2, pf3, pf4, pf5]
     if integration_type == "cXML":
         tables.append(pf6)
-
     return tables
-
-
 
 def create_outlook_draft(att: List[Tuple[str, bytes]],
                          to_: str, subject: str) -> None:
@@ -764,30 +726,31 @@ def page_multiconnexion():
         df_src = read_any(up_file)
 
         # tolérance casse / espaces
+               # --- tolérance casse / espaces ---
         norm_map = {c: c.strip().lower() for c in df_src.columns}
         expected = {
             "Numéro de compte": "numéro de compte",
-            "ManagingBranch":   "managingbranch",
+            "Code agence":      "code agence",
         }
-        missing = [
-            orig for orig, norm in expected.items() if norm not in norm_map.values()
-        ]
+        missing = [orig for orig, norm in expected.items() if norm not in norm_map.values()]
         if missing:
-            st.error(f"Colonnes manquantes ou mal orthographiées : {', '.join(missing)}")
+            st.error(f"Colonnes manquantes ou mal orthographiées : {', '.join(missing)}")
             st.stop()
 
-        # Renomme les colonnes pour la suite
+        # Renomme pour avoir exactement les libellés attendus ensuite
         for orig, norm in norm_map.items():
             if norm == "numéro de compte":
                 df_src.rename(columns={orig: "Numéro de compte"}, inplace=True)
-            elif norm == "managingbranch":
-                df_src.rename(columns={orig: "ManagingBranch"}, inplace=True)
+            elif norm == "code agence":
+                df_src.rename(columns={orig: "Code agence"}, inplace=True)
+
 
         # --- Contrôles format compte / branche ---
-        df_src["Numéro de compte"], bad_acc = sanitize_numeric(df_src["Numéro de compte"], 7)
-        df_src["ManagingBranch"], bad_man   = sanitize_numeric(df_src["ManagingBranch"], 4)
-        if bad_acc.any() or bad_man.any():
-            st.error("Numéro de compte ou ManagingBranch invalide(s).")
+                df_src["Numéro de compte"], bad_acc = sanitize_numeric(df_src["Numéro de compte"], 7)
+        df_src["Code agence"],      bad_ag  = sanitize_numeric(df_src["Code agence"], 4)
+
+        if bad_acc.any() or bad_ag.any():
+            st.error("Numéro de compte ou Code agence invalide(s).")
             st.stop()
 
         # --- Construction des tables PF ---
