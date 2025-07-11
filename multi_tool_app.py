@@ -1056,7 +1056,7 @@ def page_cpn():
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
 PAGES = {
-    "Mise à jour M2": page_update_m2,
+    "Mise à jour Mach_2": page_update_m2,
     "Classification Code": page_classification,
     "Multiconnexion": page_multiconnexion,
     "Personal Catalogue": page_dfrx_pc,
