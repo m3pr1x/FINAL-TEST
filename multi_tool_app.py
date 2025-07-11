@@ -903,7 +903,7 @@ def generator_maj_m2():
     # ⬇️ ancien : "📄 Codes produit"
     codes_file = st.file_uploader(
         "📄 Fichier contenant la colonne Mach_2 (CSV / Excel)",
-        type=("csv", "xlsx", "xls")
+        type=("csv", "xlsx", "xls"))
     col_idx_codes = st.number_input("🔢 Colonne Codes Mach_2", 1, 50, 1) if codes_file else None
 
     compte_file = st.file_uploader("📄 Numéros de compte", type=("csv", "xlsx", "xls"))
