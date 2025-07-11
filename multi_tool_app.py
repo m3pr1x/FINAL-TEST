@@ -1082,6 +1082,7 @@ def page_cpn():
     )
 
     # ─── Génération ───
+        # ─── Génération ───
     if st.button("🚀 Générer CPN", key="cpn_generate"):
         series_int = df_main.iloc[:, col_int - 1].astype(str).str.strip()
         if (~series_int.str.fullmatch(r"\d{8}")).any():
@@ -1099,9 +1100,8 @@ def page_cpn():
         )
         pf["CustomerItemId"] = series_cli_prod.repeat(len(series_cli_acc)).values
 
-        # Ajout colonne vide + ré‑ordonnage
-        pf["EmptyCol"] = ""  # colonne vide
-        df_out = pf[["CustomerItemId", "EmptyCol", "AccountNumber", "InternalItemID"]]
+        # Ré‑ordonnage final (sans colonne vide)
+        df_out = pf[["CustomerItemId", "AccountNumber", "InternalItemID"]]
 
         # Nomenclature fichiers
         today     = TODAY
@@ -1124,8 +1124,6 @@ def page_cpn():
         )
         _save_file("cpn", "⬇️ AFRX (TXT)", ack_txt, afrx_name, "text/plain")
 
-    _render_downloads("cpn")
-    _render_df("cpn")
 
 
 # ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
