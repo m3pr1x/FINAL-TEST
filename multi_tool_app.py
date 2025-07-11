@@ -411,16 +411,17 @@ def page_update_m2() -> None:
         _render_df("cl")
 
 # ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
-
 def page_classification():
     """Génère DFRXHYBRCMR & AFRXHYBRCMR à partir d’un appairage."""
     st.header("🧩 Classification Code ")
 
     # --------- 1) Appairage obligatoire ---------
-    pair_file = st.file_uploader("📄 Déposer le fichier d'appairage Code Mach_2/Code famille client (CSV / Excel)")
+    pair_file = st.file_uploader(
+        "📄 Déposer le fichier d'appairage Code Mach_2/Code famille client (CSV / Excel)"
+    )
     if not pair_file:
         st.info("Charger d’abord le fichier d’appairage Mach_2 → Code famille.")
-        _render_downloads("cc")  # affiche si déjà généré auparavant
+        _render_downloads("cc")
         _render_df("cc")
         st.stop()
 
@@ -445,6 +446,7 @@ def page_classification():
             st.error("Indice de colonne hors plage.")
             st.stop()
 
+        # ---- Construction du dataframe ----
         df_out = pair_df[[col_fam, col_m2]].rename(columns={
             col_fam: "Code famille Client",
             col_m2:  "M2",
@@ -453,34 +455,45 @@ def page_classification():
         raw_m2 = df_out["M2"].astype(str).str.strip()
         sanitized = raw_m2.apply(sanitize_code)
         invalid_mask = sanitized.isna()
-
         if invalid_mask.any():
-            st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
+            st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
             st.dataframe(raw_m2[invalid_mask].to_frame("Code fourni"))
             st.stop()
 
         df_out["M2"] = sanitized.map(lambda x: f"M2_{x}")
-
-        df_out["onsenfou"] = None
+        df_out["onsenfou"]   = None
         df_out["Entreprises"] = entreprise
-        df_out = df_out[["Code famille Client", "onsenfou", "Entreprises", "M2"]]
 
-        dstr = TODAY
-        dfrx_name = f"DFRXHYBRCMR{dstr}0000"
-        afrx_name = f"AFRXHYBRCMR{dstr}0000.txt"
+        # ---- Ajout colonne vide en première position ----
+        df_out.insert(0, "Empty", "")
+
+        # ---- Réordonnage final ----
+        df_out = df_out[["Empty", "Code famille Client", "onsenfou", "Entreprises", "M2"]]
+
+        dstr       = TODAY
+        dfrx_name  = f"DFRXHYBRCMR{dstr}0000"
+        afrx_name  = f"AFRXHYBRCMR{dstr}0000"   # <-- plus d’extension .txt
 
         _save_df("cc", df_out)
-        _save_file("cc", "📥 DFRXHYBRCMR",
-                   df_out.to_csv(sep="\t", index=False, header=False).encode(),
-                   dfrx_name, "text/tab-separated-values")
+        _save_file(
+            "cc",
+            "📥 DFRXHYBRCMR",
+            df_out.to_csv(sep="\t", index=False, header=False).encode(),
+            dfrx_name,
+            "text/tab-separated-values"
+        )
 
         ack_txt = (
             f"DFRXHYBRCMR{dstr}000068230116IT"
             f"DFRXHYBRCMR{dstr}RCMRHYBFRX                    OK000000"
         )
-        _save_file("cc", "📥 AFRXHYBRCMR",
-                   ack_txt,
-                   afrx_name, "text/plain")
+        _save_file(
+            "cc",
+            "📥 AFRXHYBRCMR",
+            ack_txt,
+            afrx_name,
+            "text/plain"
+        )
 
     _render_downloads("cc")
     _render_df("cc")
@@ -1003,7 +1016,6 @@ def page_cpn():
         if cli_file:
             _preview_file(cli_file)
 
-    # ─── Validation présence fichiers ───
     if not (main_file and cli_file):
         _render_downloads("cpn")
         _render_df("cpn")
@@ -1012,7 +1024,7 @@ def page_cpn():
     df_main = read_any(main_file)
     df_cli  = read_any(cli_file)
 
-    # ─── Sélection index colonnes ───
+    # ─── Choix des colonnes ───
     col_int = st.selectbox(
         "Colonne Référence produit interne",
         range(1, len(df_main.columns) + 1),
@@ -1029,9 +1041,8 @@ def page_cpn():
         index=0
     )
 
-    # ─── Génération CPN ───
+    # ─── Génération ───
     if st.button("🚀 Générer CPN", key="cpn_generate"):
-        # -- extraction & contrôles --
         series_int = df_main.iloc[:, col_int - 1].astype(str).str.strip()
         if (~series_int.str.fullmatch(r"\d{8}")).any():
             st.error("Réf. interne invalide : doit contenir exactement 8 chiffres.")
@@ -1041,18 +1052,18 @@ def page_cpn():
         series_cli_prod = df_main.iloc[:, col_cli_prod - 1].astype(str).str.strip()
         series_cli_acc  = df_cli.iloc[:,  col_cli_acc  - 1].astype(str).str.strip()
 
-        # -- produit cartésien InternalItemID × AccountNumber --
+        # Produit cartésien InternalItemID × AccountNumber
         pf = pd.DataFrame(
             product(series_int, series_cli_acc),
             columns=["InternalItemID", "AccountNumber"]
         )
-        # -- ajout CustomerItemId --
         pf["CustomerItemId"] = series_cli_prod.repeat(len(series_cli_acc)).values
 
-        # -- ré‑ordonnage colonnes : CustomerItemId, AccountNumber, InternalItemID --
-        df_out = pf[["CustomerItemId", "AccountNumber", "InternalItemID"]]
+        # Ajout colonne vide + ré‑ordonnage
+        pf["EmptyCol"] = ""  # colonne vide
+        df_out = pf[["CustomerItemId", "EmptyCol", "AccountNumber", "InternalItemID"]]
 
-        # -- nomenclature fichiers --
+        # Nomenclature fichiers
         today     = TODAY
         dfrx_name = f"DFRXHYBCPNA{today}0000"
         afrx_name = f"AFRXHYBCPNA{today}0000"
@@ -1062,7 +1073,7 @@ def page_cpn():
             f"DFRXHYBCPNA{today}CPNAHYBFRX                    OK000000"
         )
 
-        # -- sauvegarde & boutons download --
+        # Sauvegarde & téléchargements
         _save_df("cpn", df_out)
         _save_file(
             "cpn",
