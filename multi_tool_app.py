@@ -70,16 +70,19 @@ st.set_page_config(page_title="Boîte à outils", page_icon="🛠", layout="wide
 # ════════════ PERSISTENCE : OUTILS GÉNÉRIQUES ════════════
 
 def _save_file(section: str, label: str, data: bytes | str, filename: str, mime: str) -> None:
-    """Enregistre un fichier dans le session_state sous la clé <section>_files."""
     if isinstance(data, str):
         data = data.encode()
-    st.session_state.setdefault(f"{section}_files", [])
-    st.session_state[f"{section}_files"].append({
+
+    files_key = f"{section}_files"
+    st.session_state.setdefault(files_key, {})
+
+    # écrase / met à jour l'entrée (pas d'accumulation => pas de DuplicateWidgetID)
+    st.session_state[files_key][filename] = {
         "label": label,
         "data": data,
         "filename": filename,
         "mime": mime,
-    })
+    }
 
 
 def _save_df(section: str, df: pd.DataFrame) -> None:
@@ -97,36 +100,14 @@ def _build_zip(files: List[dict], folder_name: str) -> bytes:
 
 
 def _render_downloads(section: str) -> None:
-    """
-    Affiche :
-        • champ texte « Nom du dossier » + bouton « 📦 Télécharger tous les fichiers »
-          (si des fichiers existent) ;
-        • boutons individuels pour chaque fichier de la section ;
-        • aperçu DataFrame, le cas échéant, via _render_df().
-    """
-    files = st.session_state.get(f"{section}_files", [])
-    if files:
-        default_name = st.session_state.get(f"{section}_folder_name",
-                                            f"{section}_{TODAY}")
-        folder_name = st.text_input(
-            "📁 Nom du dossier pour le téléchargement groupé",
-            value=default_name,
-            key=f"{section}_folder_input",
-        )
-        st.session_state[f"{section}_folder_name"] = folder_name
+    store = st.session_state.get(f"{section}_files", {})
+    # compat rétro (si liste héritée d'une ancienne session)
+    if isinstance(store, list):
+        # convertir à la volée
+        store = {item["filename"]: item for item in store}
+        st.session_state[f"{section}_files"] = store
 
-        zip_bytes = _build_zip(files, folder_name)
-        st.download_button(
-            "📦 Télécharger tous les fichiers",
-            zip_bytes,
-            file_name=f"{folder_name}.zip",
-            mime="application/zip",
-            key=f"{section}_zip_all",
-        )
-
-        st.markdown("---")
-
-    for info in files:
+    for info in store.values():
         st.download_button(
             info["label"],
             info["data"],
@@ -134,7 +115,6 @@ def _render_downloads(section: str) -> None:
             mime=info["mime"],
             key=f"{section}_{info['filename']}",
         )
-
 
 def _render_df(section: str, rows: int = 5) -> None:
     df = st.session_state.get(f"{section}_df")
