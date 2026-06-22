@@ -94,43 +94,38 @@ def _inject_css() -> None:
 [data-testid="stMainBlockContainer"],
 [data-testid="stMain"] { background-color: #ffffff !important; }
 
-/* ─── Textes gris → lisibles ───────────────────────────────────────────────── */
-/* Labels de widgets */
-[data-testid="stWidgetLabel"] p,
-[data-testid="stWidgetLabel"] label,
-.stRadio label p,
-.stSelectbox label p,
-.stMultiSelect label p,
-.stNumberInput label p,
-.stTextInput label p,
-.stFileUploader label p  { color: hsl(215, 28%, 20%) !important; font-weight: 500 !important; }
+/* ─── Tous les textes → noir ────────────────────────────────────────────────── */
+/* Règle universelle : tout texte dans le contenu principal est noir */
+[data-testid="stMain"] p,
+[data-testid="stMain"] span,
+[data-testid="stMain"] label,
+[data-testid="stMain"] li,
+[data-testid="stMain"] td,
+[data-testid="stMain"] th,
+[data-testid="stMain"] div,
+[data-testid="stMain"] small,
+[data-testid="stMain"] h1,
+[data-testid="stMain"] h2,
+[data-testid="stMain"] h3,
+[data-testid="stMain"] h4 { color: #111111 !important; }
 
-/* Captions */
-.stCaption p,
-[data-testid="stCaptionContainer"] p { color: hsl(215, 20%, 40%) !important; font-size: 0.8rem !important; }
-
-/* Texte des expanders */
-[data-testid="stExpanderDetails"] p,
-[data-testid="stExpanderDetails"] li { color: hsl(215, 28%, 20%) !important; }
-
-/* Texte markdown général */
-[data-testid="stMarkdownContainer"] p { color: hsl(215, 28%, 17%) !important; }
-
-/* Texte dans les tableaux */
-[data-testid="stTable"] td,
-[data-testid="stTable"] th { color: hsl(215, 28%, 17%) !important; }
+/* Captions — légèrement plus clairs mais toujours lisibles */
+[data-testid="stMain"] .stCaption p,
+[data-testid="stMain"] [data-testid="stCaptionContainer"] p { color: #444444 !important; font-size: 0.8rem !important; }
 
 /* Placeholder inputs */
-::placeholder { color: hsl(215, 16%, 55%) !important; opacity: 1; }
+[data-testid="stMain"] ::placeholder { color: #888888 !important; opacity: 1; }
 
-/* Info / warning boxes */
-[data-testid="stAlert"] p { color: hsl(215, 28%, 17%) !important; }
+/* Selectbox options dropdown */
+[data-baseweb="select"] * { color: #111111 !important; }
 
-/* Selectbox options */
-[data-baseweb="select"] * { color: hsl(215, 28%, 17%) !important; }
+/* File uploader helper text */
+[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploaderDropzone"] p { color: #333333 !important; }
 
-/* Radio label text */
-.stRadio > div > label p { color: hsl(215, 28%, 17%) !important; }
+/* Tabs */
+.stTabs [data-baseweb="tab"] { color: #444444 !important; }
+.stTabs [aria-selected="true"] { color: hsl(229,84%,39%) !important; }
 
 /* ─── Sidebar ──────────────────────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
