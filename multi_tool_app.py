@@ -1,202 +1,271 @@
 # -*- coding: utf-8 -*-
 """
-multi_tool_app.py – Application « Boîte à outils » (Streamlit)
+multi_tool_app.py — Couche UI uniquement.
+Toute la logique métier est dans services/.
+La persistence est dans database/.
 
-Correctifs 07/2025
-    • PF1→PF6 : noms explicites (plus de timestamp)
-    • Générateur PC & MàJ M2 : ajout du fichier AFRXHYBRPCP<date>0000.txt
-    • Correction d’une parenthèse non fermée (Outlook)
-    • Clé 'nav_main' pour le menu (évite DuplicateElementId)
-    • **Bouton « Réinitialiser la page » corrigé** → nouvelle fonction
-      `reset_page()` qui vide `st.session_state` puis appelle `st.rerun()`.
-      Dorénavant :
-          st.button(..., on_click=reset_page)
-      (`st.experimental_rerun()` était déprécié depuis Streamlit ≥ 1.27).
-
-Améliorations 07/2025 — PERSISTANCE DES FICHIERS GÉNÉRÉS
-    • Les objets créés (DataFrame / bytes) sont conservés dans st.session_state
-      tant que l’utilisateur ne ré‑initialise pas la page.
-    • Les st.download_button sont affichés hors du bloc « clic »,
-      uniquement si le fichier correspondant est présent en mémoire.
-    • Chaque download_button reçoit une key= fixe basée sur le nom de
-      fichier, ce qui empêche la recréation de widgets.
-    • Un bouton global « 🔄 Réinitialiser la page » est ajouté dans la sidebar ;
-      il exécute `reset_page()`.
-    • Même logique appliquée à toutes les pages génératrices de fichiers :
-      Mise à jour M2, Classification Code, Multiconnexion, Personal Catalogue,
-      Mise à jour M2 (PC) et CPN.
-
-Nouveau 07/2025 — **Téléchargement groupé ergonomique**
-    • Dès qu’une section contient au moins un fichier :
-        – champ texte « 📁 Nom du dossier » (pré‑rempli) ;
-        – bouton **📦 Télécharger tous les fichiers** qui livre une
-          archive ZIP `<NomDuDossier>.zip` contenant chaque fichier
-          dans le dossier du même nom.
+Pour brancher une base de données :
+    1. Implémenter database/repository.IResultRepository
+    2. Remplacer la ligne :  _repo = SessionRepository()
+       par votre implémentation (ex: PostgresRepository, SupabaseRepository…)
+    3. C'est tout — aucune autre modification nécessaire.
 """
 
 from __future__ import annotations
-import csv, io, re, tempfile, os, sys, zipfile
+import io, os, tempfile, zipfile
 from datetime import datetime
-from itertools import product
-from typing import Dict, Tuple, List
-from streamlit_option_menu import option_menu
+from typing import List, Tuple
 
 import pandas as pd
 import streamlit as st
 
-# ═══════════ IMPORTS OPTIONNELS ═══════════
-try:                                   # libpostal
-    from postal.parser import parse_address          # type: ignore
-    USE_POSTAL = True
-except ImportError:
-    USE_POSTAL = False
+# ── Services (logique métier pure) ────────────────────────────────────────────
+from services import transforms, io_service, m2_service
+from services import classification_service, multiconnexion_service
+from services import pc_service, cpn_service
+from services.transforms import sanitize_code, sanitize_numeric, to_xlsx
 
-try:                                   # Outlook
-    import win32com.client as win32                  # type: ignore
+# ── Repository (persistence) ──────────────────────────────────────────────────
+from database.session_repository import SessionRepository
+
+# ════════════════════════════════════════════════════════════════════════════════
+# POINT D'ÉCHANGE : remplacez cette ligne pour changer de backend de persistence
+# Ex: _repo = PostgresRepository(os.environ["DATABASE_URL"])
+# ════════════════════════════════════════════════════════════════════════════════
+_repo = SessionRepository()
+
+# ── Imports optionnels ────────────────────────────────────────────────────────
+try:
+    import win32com.client as win32  # type: ignore
     IS_OUTLOOK = True
 except ImportError:
     IS_OUTLOOK = False
 
-try:                                   # RAM indicator
-    import psutil                                    # type: ignore
-    RAM = lambda: f"{psutil.Process().memory_info().rss/1_048_576:,.0f} Mo"
+try:
+    import psutil  # type: ignore
+    def _ram() -> str:
+        return f"{psutil.Process().memory_info().rss / 1_048_576:,.0f} Mo"
 except ModuleNotFoundError:
-    psutil = None
-    RAM = lambda: "n/a"                              # type: ignore
+    def _ram() -> str:
+        return "n/a"
 
-TODAY = datetime.today().strftime("%y%m%d")
-st.set_page_config(page_title="Boîte à outils", page_icon="🛠", layout="wide")
-
-# ════════════ PERSISTENCE : OUTILS GÉNÉRIQUES ════════════
-
-def _save_file(section: str, label: str, data: bytes | str, filename: str, mime: str) -> None:
-    if isinstance(data, str):
-        data = data.encode()
-
-    files_key = f"{section}_files"
-    st.session_state.setdefault(files_key, {})
-
-    # écrase / met à jour l'entrée (pas d'accumulation => pas de DuplicateWidgetID)
-    st.session_state[files_key][filename] = {
-        "label": label,
-        "data": data,
-        "filename": filename,
-        "mime": mime,
-    }
+# ── Config ────────────────────────────────────────────────────────────────────
+st.set_page_config(page_title="Rexel Toolbox", page_icon="🛠", layout="wide")
 
 
-def _save_df(section: str, df: pd.DataFrame) -> None:
-    st.session_state[f"{section}_df"] = df
+def _today() -> str:
+    return datetime.today().strftime("%y%m%d")
 
 
-def _build_zip(files: List[dict], folder_name: str) -> bytes:
-    """Construit une archive ZIP en mémoire contenant <files> dans <folder_name>/..."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for info in files:
-            zf.writestr(os.path.join(folder_name, info["filename"]), info["data"])
-    buf.seek(0)
-    return buf.getvalue()
+# ══ DESIGN SYSTEM CSS ═════════════════════════════════════════════════════════
+def _inject_css() -> None:
+    st.markdown("""
+<style>
+#MainMenu, footer, header { visibility: hidden; }
+.block-container { padding-top: 1.5rem !important; padding-bottom: 2rem !important; }
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMainBlockContainer"] {
+    background-color: #ffffff !important;
+}
+[data-testid="stMain"] { background-color: #ffffff !important; }
+
+[data-testid="stSidebar"] {
+    background: hsl(229, 84%, 39%) !important;
+    border-right: none !important;
+}
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] div { color: rgba(255,255,255,0.92) !important; }
+[data-testid="stSidebar"] .stRadio > div > label {
+    border-radius: 8px !important;
+    padding: 9px 14px !important;
+    margin: 2px 6px !important;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label:hover {
+    background: hsl(229, 84%, 30%) !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label[data-checked="true"] {
+    background: hsl(229, 84%, 30%) !important;
+    font-weight: 700 !important;
+}
+[data-testid="stSidebar"] .stRadio > div > label > div:first-child { display: none !important; }
+[data-testid="stSidebar"] .stButton > button {
+    background: rgba(255,255,255,0.15) !important;
+    color: white !important;
+    border: 1px solid rgba(255,255,255,0.35) !important;
+    border-radius: 8px !important;
+    width: calc(100% - 16px) !important;
+    margin: 4px 8px !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(255,255,255,0.25) !important;
+    transform: none !important;
+}
+
+.stButton > button {
+    background: hsl(229, 84%, 39%) !important;
+    color: white !important; border: none !important;
+    border-radius: 8px !important; padding: 0.55rem 1.4rem !important;
+    font-weight: 600 !important; font-size: 0.875rem !important;
+    transition: background 0.15s ease, transform 0.1s ease !important;
+    box-shadow: 0 1px 4px rgba(26,58,199,0.25) !important;
+}
+.stButton > button:hover { background: hsl(229,84%,30%) !important; transform: translateY(-1px) !important; }
+.stButton > button:disabled { background: hsl(220,13%,75%) !important; transform: none !important; }
+
+.stDownloadButton > button {
+    background: white !important; color: hsl(229,84%,39%) !important;
+    border: 1.5px solid hsl(229,84%,39%) !important; border-radius: 8px !important;
+    font-weight: 600 !important; transition: all 0.15s ease !important;
+}
+.stDownloadButton > button:hover { background: hsl(229,84%,96%) !important; transform: translateY(-1px) !important; }
+
+[data-testid="stFileUploaderDropzone"] {
+    border: 2px dashed hsl(229,84%,72%) !important;
+    border-radius: 10px !important; background: hsl(229,84%,97%) !important;
+}
+[data-testid="stFileUploaderDropzone"]:hover { border-color: hsl(229,84%,39%) !important; }
+
+.stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 2px solid hsl(220,13%,91%); background: transparent; }
+.stTabs [data-baseweb="tab"] {
+    border-radius: 8px 8px 0 0 !important; padding: 8px 20px !important;
+    font-weight: 500 !important; color: hsl(215,16%,47%) !important;
+    border: none !important; background: transparent !important;
+}
+.stTabs [aria-selected="true"] {
+    color: hsl(229,84%,39%) !important;
+    border-bottom: 2px solid hsl(229,84%,39%) !important; font-weight: 700 !important;
+}
+
+.stTextInput input, [data-testid="stNumberInput"] input {
+    border-radius: 8px !important; border-color: hsl(220,13%,85%) !important;
+}
+.stTextInput input:focus, [data-testid="stNumberInput"] input:focus {
+    border-color: hsl(229,84%,39%) !important; box-shadow: 0 0 0 3px hsl(229,84%,92%) !important;
+}
+
+.streamlit-expanderHeader { border-radius: 8px !important; background: hsl(229,84%,97%) !important; font-weight: 600 !important; }
+[data-testid="stDataFrame"] { border-radius: 10px !important; overflow: hidden; border: 1px solid hsl(220,13%,91%) !important; }
+[data-testid="stAlert"] { border-radius: 10px !important; }
+
+.rexel-page-header {
+    background: linear-gradient(135deg, hsl(229,84%,36%), hsl(229,84%,50%));
+    color: white; padding: 22px 28px; border-radius: 14px; margin-bottom: 24px;
+}
+.rexel-page-header h1 { font-size:1.55rem; font-weight:700; margin:0 0 4px 0; color:white !important; }
+.rexel-page-header p  { font-size:0.87rem; opacity:0.85; margin:0; color:white !important; }
+
+.rexel-metric {
+    background: white; border-radius: 12px; padding: 18px 20px;
+    border: 1px solid hsl(220,13%,91%); box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 100%;
+}
+.rexel-metric-label { font-size:.72rem; font-weight:600; color:hsl(215,16%,47%); text-transform:uppercase; letter-spacing:.05em; }
+.rexel-metric-title { font-size:.95rem; font-weight:700; color:hsl(215,28%,17%); margin:2px 0; }
+.rexel-metric-desc  { font-size:.75rem; color:hsl(215,16%,57%); }
+.rexel-metric-icon  { width:42px; height:42px; border-radius:10px; background:hsl(229,84%,95%);
+                       display:flex; align-items:center; justify-content:center; font-size:1.25rem; flex-shrink:0; }
+
+.rexel-tool-card {
+    background: white; border-radius: 12px; padding: 20px;
+    border: 1px solid hsl(220,13%,91%); box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    transition: box-shadow .2s ease, transform .1s ease; margin-bottom: 4px;
+}
+.rexel-tool-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.09); transform: translateY(-2px); }
+.rexel-tool-icon { width:38px; height:38px; border-radius:9px; background:hsl(229,84%,95%);
+                    display:inline-flex; align-items:center; justify-content:center; font-size:1.1rem; }
+.rexel-tool-title { font-size:1rem; font-weight:700; color:hsl(215,28%,17%); margin:0; }
+.rexel-tool-desc  { font-size:.82rem; color:hsl(215,16%,47%); margin:8px 0 14px 0; line-height:1.5; }
+.badge-active { display:inline-block; padding:2px 8px; border-radius:20px; font-size:.68rem;
+                font-weight:700; letter-spacing:.04em; background:#dcfce7; color:#166534; }
+
+.sidebar-logo { display:flex; align-items:center; gap:10px;
+                padding:14px 18px 18px 18px; border-bottom:1px solid rgba(255,255,255,.18); margin-bottom:10px; }
+.sidebar-logo-icon { width:34px; height:34px; background:white; border-radius:8px;
+                      display:flex; align-items:center; justify-content:center;
+                      font-weight:800; font-size:.95rem; color:hsl(229,84%,39%); flex-shrink:0; }
+.sidebar-logo-title { margin:0; font-size:.9rem; font-weight:700; color:white !important; line-height:1.2; }
+.sidebar-logo-sub   { margin:0; font-size:.68rem; color:rgba(255,255,255,.72) !important; }
+</style>
+""", unsafe_allow_html=True)
 
 
-def _render_downloads(section: str) -> None:
-    store = st.session_state.get(f"{section}_files", {})
-    # compat rétro (si liste héritée d'une ancienne session)
-    if isinstance(store, list):
-        # convertir à la volée
-        store = {item["filename"]: item for item in store}
-        st.session_state[f"{section}_files"] = store
-
-    for info in store.values():
-        st.download_button(
-            info["label"],
-            info["data"],
-            file_name=info["filename"],
-            mime=info["mime"],
-            key=f"{section}_{info['filename']}",
-        )
-
-def _render_df(section: str, rows: int = 5) -> None:
-    df = st.session_state.get(f"{section}_df")
-    if df is not None:
-        st.dataframe(df.head(rows))
-
-# ──────────────────────────── UTILITAIRES GLOBAUX ────────────────────────────
-
-def read_csv(buf: io.BytesIO) -> pd.DataFrame:
-    """Lecture robuste CSV : détection encodage + séparateur."""
-    for enc in ("utf-8", "latin1", "cp1252"):
-        buf.seek(0)
-        try:
-            sample = buf.read(2048).decode(enc, errors="ignore")
-            sep = csv.Sniffer().sniff(sample, delimiters=";,|\t").delimiter
-            buf.seek(0)
-            return pd.read_csv(buf, sep=sep, encoding=enc, engine="python",
-                               on_bad_lines="skip", dtype=str)
-        except Exception:
-            continue
-    raise ValueError("CSV illisible (encodage ou séparateur)")
+# ══ CACHE WRAPPER (lecture fichiers) ═════════════════════════════════════════
+@st.cache_data(show_spinner=False)
+def _cached_read(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    return io_service.read_file(file_bytes, filename)
 
 
 def read_any(upload) -> pd.DataFrame:
-    name = upload.name.lower()
-    if name.endswith(".csv"):
-        df = read_csv(io.BytesIO(upload.getvalue()))
-    elif name.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(upload, engine="openpyxl", dtype=str)
-    else:
-        raise ValueError("Extension non gérée")
-
-    # ⬇️  supprime les colonnes d’index ajoutées par Excel/CSV
-    df = df.loc[:, ~df.columns.str.match(r'^Unnamed')]
-
-    return df
+    return _cached_read(upload.getvalue(), upload.name)
 
 
-def to_m2(s: pd.Series) -> pd.Series:
-    return s.astype(str).str.zfill(6)
+# ══ UI HELPERS ════════════════════════════════════════════════════════════════
+
+def page_header(title: str, subtitle: str) -> None:
+    st.markdown(f"""
+    <div class="rexel-page-header">
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+    </div>""", unsafe_allow_html=True)
 
 
-def sanitize_code(code: str) -> str | None:
-    """Valide un code M2 de 5–6 chiffres, retourne None sinon."""
-    s = str(code).strip()
-    if not s.isdigit():
-        return None
-    return s.zfill(6) if len(s) <= 6 else None
+def _render_downloads(tool_id: str) -> None:
+    store = _repo.list_files(tool_id)
+    if not store:
+        return
+    items = list(store.values())
+    cols = st.columns(min(len(items), 3))
+    for i, info in enumerate(items):
+        with cols[i % len(cols)]:
+            st.download_button(
+                info["label"], info["data"],
+                file_name=info["filename"], mime=info["mime"],
+                key=f"dl__{tool_id}__{info['filename']}",
+                use_container_width=True,
+            )
+    if len(items) > 1:
+        folder = st.text_input("📁 Nom du dossier ZIP", value=tool_id.upper(),
+                               key=f"{tool_id}__zip_name")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for info in items:
+                zf.writestr(os.path.join(folder, info["filename"]), info["data"])
+        buf.seek(0)
+        st.download_button(
+            "📦 Télécharger tous les fichiers (.zip)", buf.getvalue(),
+            file_name=f"{folder}.zip", mime="application/zip",
+            key=f"zip__{tool_id}", use_container_width=True,
+        )
 
 
-def sanitize_numeric(series: pd.Series, width: int) -> Tuple[pd.Series, pd.Series]:
-    """Pad numérique à largeur fixe + renvoie masque erreurs."""
-    s = series.astype(str).str.strip()
-    s_pad = s.apply(lambda x: x.zfill(width) if x.isdigit() and len(x) <= width else x)
-    bad = ~s_pad.str.fullmatch(fr"\d{{{width}}}")
-    return s_pad, bad
+def _render_df(tool_id: str, key: str = "result", rows: int = 5) -> None:
+    df = _repo.load_dataframe(tool_id, key)
+    if df is not None:
+        with st.expander(f"📊 Aperçu ({len(df):,} lignes)", expanded=False):
+            st.dataframe(df.head(rows), use_container_width=True)
 
-# ═══════════════════ BOUTON RÉINITIALISER (FIX) ═══════════════════
-
-def reset_page() -> None:
-    """Vide complètement st.session_state puis relance l’application."""
-    st.session_state.clear()
-    # Utilise désormais l’API stable – `st.rerun()`
-    st.rerun()
-# ═══════════════════ PAGE 1 – MISE À JOUR M2 (PC & Appairage) ═══════════════════
 
 def _preview_file(upload) -> None:
-    """Aperçu interactif : 5 lignes + liste des colonnes."""
     try:
         df = read_any(upload)
     except Exception as e:
-        st.error(f"{upload.name} – lecture impossible : {e}")
+        st.error(f"{upload.name} – lecture impossible : {e}")
         return
     with st.expander(f"📄 Aperçu – {upload.name}", expanded=False):
-        st.dataframe(df.head())
-        meta = pd.DataFrame({"N°": range(1, len(df.columns)+1),
-                             "Nom de colonne": df.columns})
+        st.dataframe(df.head(), use_container_width=True)
+        meta = pd.DataFrame({"N°": range(1, len(df.columns)+1), "Colonne": df.columns})
         st.table(meta)
 
 
-def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
-    """Widget upload + état mémoire + aperçu automatique."""
+def _uploader_state(prefix: str, lots: dict) -> None:
     for key in lots:
         st.session_state.setdefault(f"{prefix}_{key}_files", [])
         st.session_state.setdefault(f"{prefix}_{key}_names", [])
@@ -204,569 +273,314 @@ def _uploader_state(prefix: str, lots: dict[str, tuple[str, str, str]]) -> None:
     cols = st.columns(len(lots))
     for (key, (title, lab_ref, lab_val)), col in zip(lots.items(), cols):
         with col:
-            st.subheader(title)
-            uploads = st.file_uploader("Déposer votre fichier", type=("csv", "xlsx"),
-                                       accept_multiple_files=True,
-                                       key=f"{prefix}_{key}_up")
+            st.markdown(f"**{title}**")
+            uploads = st.file_uploader(
+                "Déposer votre fichier", type=("csv", "xlsx", "xls"),
+                accept_multiple_files=True, key=f"{prefix}_{key}_up",
+                label_visibility="collapsed",
+            )
             if uploads:
                 new = [u for u in uploads
                        if u.name not in st.session_state[f"{prefix}_{key}_names"]]
-                st.session_state[f"{prefix}_{key}_files"] += new
-                st.session_state[f"{prefix}_{key}_names"] += [u.name for u in new]
-                st.success(f"{len(new)} fichier(s) ajouté(s)")
-                for up in new:
-                    _preview_file(up)
-
-            st.number_input(lab_ref, 1, 50, 1,
-                            key=f"{prefix}_{key}_ref",
-                            help="Index de la colonne contenant la référence produit")
-            st.number_input(lab_val, 1, 50, 2,
-                            key=f"{prefix}_{key}_val",
-                            help="Index de la colonne contenant le code M2")
-            st.caption(f"{len(st.session_state[f'{prefix}_{key}_files'])} fichier(s) • RAM {RAM()}")
-
-
-def _add_cols(df: pd.DataFrame, ref_i: int, m2_i: int,
-              ref_label: str, m2_label: str) -> pd.DataFrame:
-    sub = df.iloc[:, [ref_i-1, m2_i-1]].copy()
-    sub.columns = [ref_label, m2_label]
-    sub[m2_label] = to_m2(sub[m2_label])
-    return sub
+                if new:
+                    st.session_state[f"{prefix}_{key}_files"] += new
+                    st.session_state[f"{prefix}_{key}_names"] += [u.name for u in new]
+                    st.success(f"✓ {len(new)} fichier(s) ajouté(s)")
+                    for up in new:
+                        _preview_file(up)
+            st.number_input(lab_ref, 1, 50, 1, key=f"{prefix}_{key}_ref",
+                            help="Index de la colonne référence produit")
+            st.number_input(lab_val, 1, 50, 2, key=f"{prefix}_{key}_val",
+                            help="Index de la colonne code M2")
+            n = len(st.session_state[f"{prefix}_{key}_files"])
+            st.caption(f"📎 {n} fichier(s) · RAM {_ram()}")
 
 
-def _build_m2_update(prefix: str, lots: dict[str, tuple[str, str, str]]) -> pd.DataFrame:
-    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
-                        ignore_index=True).drop_duplicates()
-           for k in lots}
-
-    old_df = _add_cols(dfs["old"],
-                       st.session_state[f"{prefix}_old_ref"],
-                       st.session_state[f"{prefix}_old_val"],
-                       "Ref", "M2_ancien")
-
-    new_df = _add_cols(dfs["new"],
-                       st.session_state[f"{prefix}_new_ref"],
-                       st.session_state[f"{prefix}_new_val"],
-                       "Ref", "M2_nouveau")
-
-    merged = new_df.merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
-    return (merged.groupby("M2_nouveau")["M2_ancien"]
-                  .agg(lambda s: s.value_counts().idxmax()
-                       if s.notna().any() else pd.NA)
-                  ).reset_index()
+def reset_page() -> None:
+    _repo.clear()
+    st.rerun()
 
 
-def _build_appairage(prefix: str,
-                     lots: dict[str, tuple[str, str, str]],
-                     extra_cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # ─── 0) Lecture + concat ────────────────────────────────────────────────
-    dfs = {k: pd.concat([read_any(f) for f in st.session_state[f"{prefix}_{k}_files"]],
-                        ignore_index=True).drop_duplicates()
-           for k in lots}
+# ══ PAGES ═════════════════════════════════════════════════════════════════════
 
-    # ─── 1) Plan N‑1 : on garde seulement Réf + M2 ─────────────────────────
-    old_df = _add_cols(dfs["old"],
-                       st.session_state[f"{prefix}_old_ref"],
-                       st.session_state[f"{prefix}_old_val"],
-                       "Ref", "M2_ancien")
+def page_dashboard() -> None:
+    page_header("🛠 Rexel Multi-Outils B2B",
+                "Tableau de bord — sélectionnez un outil dans le menu latéral")
 
-    # ─── 2) Plan N (2025) : on garde TOUTES les colonnes + normalisation M2 ─
-    ref_i_new = st.session_state[f"{prefix}_new_ref"] - 1
-    m2_i_new  = st.session_state[f"{prefix}_new_val"] - 1
+    tools_meta = [
+        ("🔄", "Mise à jour M2",      "Mappe les codes Mach_2 entre plan N‑1 et N",     "Mise à jour Mach_2"),
+        ("🧩", "Classification Code", "Génère DFRXHYBRCMR et AFRXHYBRCMR",              "Classification Code"),
+        ("📦", "Multiconnexion",       "Fichiers PF1–PF6 pour création de comptes B2B",  "Multiconnexion"),
+        ("🗂️", "Personal Catalogue",  "Produit DFRXHYBRPCP, AFRXHYBRCMP et les ACK",    "Personal Catalogue"),
+        ("📑", "CPN",                  "Produit cartésien Référence × Comptes → DFRX",   "CPN"),
+    ]
 
-    new_full = dfs["new"].copy()
+    cols = st.columns(5)
+    for col, (icon, name, desc, _) in zip(cols, tools_meta):
+        with col:
+            st.markdown(f"""
+            <div class="rexel-metric">
+                <div>
+                    <div class="rexel-metric-label">Outil</div>
+                    <div class="rexel-metric-title">{name}</div>
+                    <div class="rexel-metric-desc">{desc}</div>
+                </div>
+                <div class="rexel-metric-icon">{icon}</div>
+            </div>""", unsafe_allow_html=True)
 
-    # On extrait les bonnes colonnes AVANT d’insérer quoi que ce soit
-    ref_series = new_full.iloc[:, ref_i_new].astype(str).str.strip()
-    m2_series  = new_full.iloc[:, m2_i_new]
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    st.markdown("### Outils disponibles")
 
-    new_full.insert(0, "Ref", ref_series)
-    new_full.insert(1, "M2_nouveau", to_m2(m2_series))
-
-    new_df = new_full  # alias lisible
-
-    # ─── 3) Mapping M2_ancien → Code famille client ────────────────────────
-    map_df = dfs["map"].iloc[:, [st.session_state[f"{prefix}_map_ref"]-1,
-                                 st.session_state[f"{prefix}_map_val"]-1]].copy()
-    map_df.columns = ["M2_ancien", "Code_famille_Client"]
-    map_df["M2_ancien"] = to_m2(map_df["M2_ancien"])
-    old_df["M2_ancien"] = to_m2(old_df["M2_ancien"])
-
-    merged = (new_df
-              .merge(old_df[["Ref", "M2_ancien"]], on="Ref", how="left")
-              .merge(map_df, on="M2_ancien", how="left"))
-
-    # ─── 4) Table principale + table des codes sans famille ────────────────
-    fam = (merged.groupby("M2_nouveau")["Code_famille_Client"]
-                 .agg(lambda s: s.value_counts().idxmax()
-                      if s.notna().any() else pd.NA)
-                 ).reset_index()
-
-    missing = fam[fam["Code_famille_Client"].isna()].copy()
-    if extra_cols:
-        keep = [c for c in extra_cols if c in merged.columns]
-        missing = missing.merge(merged[["M2_nouveau"] + keep].drop_duplicates(),
-                                on="M2_nouveau", how="left")
-
-    return fam, missing
+    rows_of_3 = [tools_meta[i:i+3] for i in range(0, len(tools_meta), 3)]
+    for row in rows_of_3:
+        cols = st.columns(3)
+        for col, (icon, name, desc, nav_key) in zip(cols, row):
+            with col:
+                st.markdown(f"""
+                <div class="rexel-tool-card">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                        <div class="rexel-tool-icon">{icon}</div>
+                        <div>
+                            <div class="rexel-tool-title">{name}</div>
+                            <span class="badge-active">Actif</span>
+                        </div>
+                    </div>
+                    <div class="rexel-tool-desc">{desc}</div>
+                </div>""", unsafe_allow_html=True)
+                if st.button("Ouvrir", key=f"dash_{nav_key}", use_container_width=True):
+                    st.session_state["nav_main"] = nav_key
+                    st.rerun()
 
 
 def page_update_m2() -> None:
-    st.header("🔄 Mise à jour des codes Mach_2")
+    page_header("🔄 Mise à jour des codes Mach_2",
+                "Mappez les anciens codes M2 vers les nouveaux via les plans d'offre N‑1 et N")
 
-    # Les deux onglets
-    tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Classification Code"])
+    tab_pc, tab_cli = st.tabs(["📂 Personal Catalogue", "🤝 Appairage Client"])
 
-    # ------------------------------------------------------------------
-    # 1) Onglet Personal Catalogue
-    # ------------------------------------------------------------------
     with tab_pc:
         LOTS_PC = {
-            "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
-            "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
+            "old": ("Ancien plan d'offre", "Colonne Référence produit", "Colonne Ancien M2"),
+            "new": ("Nouveau plan d'offre", "Colonne Référence produit", "Colonne Nouveau M2"),
         }
         _uploader_state("pc", LOTS_PC)
 
-        if st.button("🚀 Générer le fichier", key="pc_generate"):
+        if st.button("🚀 Générer le fichier", key="pc_generate"):
             if not all(st.session_state[f"pc_{k}_files"] for k in LOTS_PC):
                 st.warning("Chargez à la fois les fichiers N‑1 **et** N.")
                 st.stop()
-
-            maj_df = _build_m2_update("pc", LOTS_PC)
-            _save_df("pc_maj", maj_df)
-            _save_file("pc_maj", "⬇️ Télécharger M2_MisAJour.csv",
-                       maj_df.to_csv(index=False, sep=";"),
-                       f"M2_MisAJour_{TODAY}.csv", "text/csv")
+            with st.spinner("Calcul en cours…"):
+                old_df = pd.concat([read_any(f) for f in st.session_state["pc_old_files"]],
+                                   ignore_index=True).drop_duplicates()
+                new_df = pd.concat([read_any(f) for f in st.session_state["pc_new_files"]],
+                                   ignore_index=True).drop_duplicates()
+                maj_df = m2_service.build_m2_update(
+                    old_df, new_df,
+                    st.session_state["pc_old_ref"] - 1, st.session_state["pc_old_val"] - 1,
+                    st.session_state["pc_new_ref"] - 1, st.session_state["pc_new_val"] - 1,
+                )
+            _repo.save_dataframe("pc_maj", "result", maj_df)
+            _repo.save_file("pc_maj", f"M2_MisAJour_{_today()}.csv",
+                            maj_df.to_csv(index=False, sep=";").encode(),
+                            "text/csv", "⬇️ M2_MisAJour.csv")
+            st.success(f"✓ {len(maj_df):,} codes traités")
 
         _render_downloads("pc_maj")
         _render_df("pc_maj")
 
-    # ------------------------------------------------------------------
-    # 2) Onglet Appairage client
-    # ------------------------------------------------------------------
     with tab_cli:
         LOTS_CL = {
-            "old": ("Ancien plan d'offre", "Référence produit", "Ancien code Mach_2"),
-            "new": ("Nouveau plan d'offre", "Référence produit", "Nouveau code Mach_2"),
-            "map": ("Appairage Client",
-                    "Ancien code Mach2", "Code famille client"),
+            "old": ("Ancien plan d'offre",  "Colonne Référence produit", "Colonne Ancien M2"),
+            "new": ("Nouveau plan d'offre",  "Colonne Référence produit", "Colonne Nouveau M2"),
+            "map": ("Appairage Client",      "Colonne Ancien M2",         "Colonne Code famille client"),
         }
-
         _uploader_state("cl", LOTS_CL)
 
-        # Pré‑renseigner les colonnes disponibles pour le multiselect
-        if (not st.session_state.get("cl_cols")
-                and st.session_state.get("cl_new_files")):
+        if not st.session_state.get("cl_cols") and st.session_state.get("cl_new_files"):
             cols_new = []
             for f in st.session_state["cl_new_files"]:
                 cols_new += read_any(f).columns.tolist()
             st.session_state["cl_cols"] = sorted(set(cols_new))
 
         extra_cols = st.multiselect(
-            "Colonnes additionnelles (pour « a_remplir.csv »)",
+            "Colonnes additionnelles pour `a_remplir.csv`",
             options=st.session_state.get("cl_cols", []),
         )
 
-        if st.button("🚀 Générer : fichiers d’appairage", key="cl_generate"):
+        if st.button("🚀 Générer les fichiers d'appairage", key="cl_generate"):
             if not all(st.session_state[f"cl_{k}_files"] for k in LOTS_CL):
-                st.warning("Chargez les **3** jeux de données (N‑1, N, Mapping).")
+                st.warning("Chargez les **3** jeux de données.")
                 st.stop()
-
             if (st.session_state["cl_old_ref"] == st.session_state["cl_old_val"] or
-                st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
-                st.error("« Ref produit » et « M2 » doivent être deux colonnes différentes.")
+                    st.session_state["cl_new_ref"] == st.session_state["cl_new_val"]):
+                st.error("Référence produit et M2 doivent être deux colonnes différentes.")
                 st.stop()
 
-            appair_df, missing_df = _build_appairage("cl", LOTS_CL, extra_cols)
-
-            _save_df("cl", appair_df)
-            _save_file("cl", "⬇️ appairage_M2_famille.csv",
-                       appair_df.to_csv(index=False, sep=";"),
-                       f"appairage_M2_CodeFamilleClient_{TODAY}.csv", "text/csv")
-            _save_file("cl", "⬇️ a_remplir.csv",
-                       missing_df.to_csv(index=False, sep=";"),
-                       f"a_remplir_{TODAY}.csv", "text/csv")
+            with st.spinner("Calcul en cours…"):
+                def _concat(key):
+                    return pd.concat([read_any(f) for f in st.session_state[f"cl_{key}_files"]],
+                                     ignore_index=True).drop_duplicates()
+                appair_df, missing_df = m2_service.build_appairage(
+                    _concat("old"), _concat("new"), _concat("map"),
+                    st.session_state["cl_old_ref"] - 1, st.session_state["cl_old_val"] - 1,
+                    st.session_state["cl_new_ref"] - 1, st.session_state["cl_new_val"] - 1,
+                    st.session_state["cl_map_ref"] - 1, st.session_state["cl_map_val"] - 1,
+                    extra_cols,
+                )
+            dstr = _today()
+            _repo.save_dataframe("cl", "result", appair_df)
+            _repo.save_file("cl", f"appairage_M2_CodeFamilleClient_{dstr}.csv",
+                            appair_df.to_csv(index=False, sep=";").encode(),
+                            "text/csv", "⬇️ appairage_M2_famille.csv")
+            _repo.save_file("cl", f"a_remplir_{dstr}.csv",
+                            missing_df.to_csv(index=False, sep=";").encode(),
+                            "text/csv", "⬇️ a_remplir.csv")
+            st.success(f"✓ {len(appair_df):,} codes mappés · {len(missing_df):,} sans famille")
 
         _render_downloads("cl")
         _render_df("cl")
 
-# ═══════════════════ PAGE 2 – CLASSIFICATION CODE ═══════════════════
-def page_classification():
-    """Génère DFRXHYBRCMR & AFRXHYBRCMR à partir d’un appairage."""
-    st.header("🧩 Classification Code ")
 
-    # --------- 1) Appairage obligatoire ---------
-    pair_file = st.file_uploader(
-        "📄 Déposer le fichier d'appairage Code Mach_2/Code famille client (CSV / Excel)"
-    )
+def page_classification() -> None:
+    page_header("🧩 Classification Code",
+                "Génère DFRXHYBRCMR et AFRXHYBRCMR à partir d'un appairage M2 → famille client")
+
+    pair_file = st.file_uploader("📄 Fichier d'appairage", type=("csv", "xlsx", "xls"))
     if not pair_file:
-        st.info("Charger d’abord le fichier d’appairage Mach_2 → Code famille.")
+        st.info("Chargez le fichier d'appairage pour continuer.")
         _render_downloads("cc")
         _render_df("cc")
         st.stop()
 
-    pair_df = read_any(pair_file)
-    st.dataframe(pair_df.head())
+    try:
+        pair_df = read_any(pair_file)
+    except Exception as e:
+        st.error(f"Impossible de lire le fichier : {e}")
+        st.stop()
+
+    with st.expander("📊 Aperçu du fichier chargé"):
+        st.dataframe(pair_df.head(), use_container_width=True)
 
     max_cols = len(pair_df.columns)
-    idx_m2  = st.number_input("🔢 Index colonne Code Mach_2", 1, max_cols, 1)
-    idx_fam = st.number_input("🔢 Index colonne Code famille client", 1, max_cols, 2)
+    col1, col2, col3 = st.columns(3)
+    with col1: idx_m2  = st.number_input("🔢 Index colonne Code M2",         1, max_cols, 1)
+    with col2: idx_fam = st.number_input("🔢 Index colonne Code famille",     1, max_cols, 2)
+    with col3: entreprise = st.text_input("🏢 Entreprise")
 
-    entreprise = st.text_input("🏢 Entreprise")
-
-    if st.button("🚀 Générer les fichiers", key="class_generate"):
+    if st.button("🚀 Générer les fichiers", key="class_generate"):
         if not entreprise:
-            st.warning("Renseigne le champ Entreprise.")
+            st.warning("Renseignez le champ Entreprise.")
             st.stop()
-
         try:
-            col_m2  = pair_df.columns[int(idx_m2)  - 1]
-            col_fam = pair_df.columns[int(idx_fam) - 1]
-        except IndexError:
-            st.error("Indice de colonne hors plage.")
+            with st.spinner("Génération…"):
+                dstr = _today()
+                df_out, dfrx_bytes, afrx_ack = classification_service.build_classification_output(
+                    pair_df, int(idx_m2), int(idx_fam), entreprise, dstr
+                )
+        except (ValueError, IndexError) as e:
+            st.error(str(e))
             st.stop()
 
-        # ---- Construction du dataframe ----
-        df_out = pair_df[[col_fam, col_m2]].rename(columns={
-            col_fam: "Code famille Client",
-            col_m2:  "M2",
-        }).copy()
-
-        raw_m2 = df_out["M2"].astype(str).str.strip()
-        sanitized = raw_m2.apply(sanitize_code)
-        invalid_mask = sanitized.isna()
-        if invalid_mask.any():
-            st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
-            st.dataframe(raw_m2[invalid_mask].to_frame("Code fourni"))
-            st.stop()
-
-        df_out["M2"] = sanitized.map(lambda x: f"M2_{x}")
-        df_out["onsenfou"]   = None
-        df_out["Entreprises"] = entreprise
-
-        # ---- Ajout colonne vide en première position ----
-        df_out.insert(0, "Empty", "")
-
-        # ---- Réordonnage final ----
-        df_out = df_out[["Empty", "Code famille Client", "onsenfou", "Entreprises", "M2"]]
-
-        dstr       = TODAY
-        dfrx_name  = f"DFRXHYBRCMR{dstr}0000"
-        afrx_name  = f"AFRXHYBRCMR{dstr}0000"   # <-- plus d’extension .txt
-
-        _save_df("cc", df_out)
-        _save_file(
-            "cc",
-            "📥 DFRXHYBRCMR",
-            df_out.to_csv(sep="\t", index=False, header=False).encode(),
-            dfrx_name,
-            "text/tab-separated-values"
-        )
-
-        ack_txt = (
-            f"DFRXHYBRCMR{dstr}000068230116IT"
-            f"DFRXHYBRCMR{dstr}RCMRHYBFRX                    OK000000"
-        )
-        _save_file(
-            "cc",
-            "📥 AFRXHYBRCMR",
-            ack_txt,
-            afrx_name,
-            "text/plain"
-        )
+        _repo.save_dataframe("cc", "result", df_out)
+        _repo.save_file("cc", f"DFRXHYBRCMR{dstr}0000", dfrx_bytes,
+                        "text/tab-separated-values", "📥 DFRXHYBRCMR")
+        _repo.save_file("cc", f"AFRXHYBRCMR{dstr}0000", afrx_ack.encode(),
+                        "text/plain", "📥 AFRXHYBRCMR")
+        st.success(f"✓ {len(df_out):,} lignes générées")
 
     _render_downloads("cc")
     _render_df("cc")
 
-# ═══════════════════ PAGE 3 – Multiconnexion ═══════════════════
 
-def to_xlsx(df: pd.DataFrame) -> bytes:
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as w:
-        df.to_excel(w, index=False)
-    buf.seek(0)
-    return buf.getvalue()
+def page_multiconnexion() -> None:
+    page_header("📦 Multiconnexion",
+                "Génère les fichiers PF1–PF6 pour la création de comptes B2B (OCI ou cXML)")
 
+    integration_type = st.radio("Type d'intégration", ["cXML", "OCI"], horizontal=True)
 
-# ───────────────────────── Helper adresse → dict ────────────────────
-# ───────────────────────── Helper adresse → dict ────────────────────
-def split_address(addr: str) -> dict:
-    """
-    Tente d’analyser l’adresse.
-    1) Utilise libpostal si disponible.
-    2) Sinon, regex tolérante : prend en charge « 10 bis rue X, 75000 Paris »,
-       « 10bis rue X 75000 PARIS », etc.
-    Renvoie toujours un dict : num, voie, cp, ville, pays.
-    """
-    parts = {"num": "", "voie": "", "cp": "", "ville": "", "pays": "FR"}
-
-    if USE_POSTAL:                                  # libpostal disponible
-        for val, label in parse_address(addr or ""):
-            if label == "house_number":
-                parts["num"] = val
-            elif label in {"road", "pedestrian", "path", "footway"}:
-                parts["voie"] = val
-            elif label == "postcode":
-                parts["cp"] = val
-            elif label in {"city", "town", "village", "suburb"}:
-                parts["ville"] = val
-            elif label == "country":
-                parts["pays"] = val
-        return parts
-
-    # -------- Fallback regex amélioré --------
-    import re
-    pattern = re.compile(
-        r"""
-        ^\s*
-        (?P<num>[\d\w\-]*)          # numéro : 10, 10B, 5-7, etc. (facultatif)
-        \s*
-        (?P<voie>[^,]+?)            # libellé de voie jusqu'à virgule ou CP
-        [,\s]+
-        (?P<cp>\d{2}\s?\d{3})       # code postal (75008 ou 75 008)
-        \s+
-        (?P<ville>.+?)              # ville
-        \s*$
-        """,
-        re.VERBOSE | re.IGNORECASE,
-    )
-    m = pattern.match(addr or "")
-    if m:
-        parts.update(m.groupdict())
-    return parts
-
-
-def build_tables(
-    df_src: pd.DataFrame,
-    *,
-    entreprise: str,
-    view_master_catalog: str,
-    punchout_user_id: str,
-    domain: str,
-    identity: str,
-    integration_type: str = "OCI",   # ou "cXML"
-) -> list[pd.DataFrame]:
-    """
-    Construit PF1 → PF5 (+ PF6 si cXML) au format attendu.
-    Le DataFrame d’entrée doit contenir :
-        « Numéro de compte », « Raison sociale », « Adresse », « Code agence ».
-    """
-    pf1_cols = [
-        "uid", "name", "locName",
-        "CXmIAssignedConfiguration",
-        "pcCompoundProfile",
-        "ViewMasterCatalog",
-    ]
-    pf2_cols = [
-        "B2B Unit",
-        "ADRESSE / Numéro de rue", "ADRESSE / rue",
-        "ADRESSE / Code postal",   "ADRESSE / Ville",
-        "ADRESSE / Pays/Région",
-        "INFORMATIONS D'ADRESSE SUPPLÉMENTAIRES / Téléphone 1",
-    ]
-    pf3_cols = ["B2BUnitID", "itemtype", "managingBranches", "punchoutUserID", "sealed"]
-    pf4_cols = ["aliasName", "branch", "punchoutUserID", "sealed"]
-    pf5_cols = ["B2BUnitID", "punchoutUserID"]
-    pf6_cols = ["number", "domain", "identity"]
-
-    pf1 = pd.DataFrame(columns=pf1_cols)
-    pf2 = pd.DataFrame(columns=pf2_cols)
-    pf3 = pd.DataFrame(columns=pf3_cols)
-    pf4 = pd.DataFrame(columns=pf4_cols)
-    pf5 = pd.DataFrame(columns=pf5_cols)
-    pf6 = pd.DataFrame(columns=pf6_cols)  # utilisé seulement en cXML
-
-    sealed_val = "false"
-
-    for _, row in df_src.iterrows():
-        account   = row["Numéro de compte"]
-        company   = row["Raison sociale"]
-        full_addr = (row["Adresse"] or "").strip()  # <-- trim pour éviter NaN/espaces
-
-        branch    = row["Code agence"]      # ← remplace ManagingBranch
-
-        # PF1 : locName == name (plus d'adresse)
-        pf1.loc[len(pf1)] = [
-            account,
-            company,
-            company,                        # locName = company
-            f"frx-variant-{entreprise}-configuration-set",
-            f"PC_{entreprise}",
-            view_master_catalog,
-        ]
-
-        # PF2 : adresse détaillée
-        addr = split_address(full_addr)
-        pf2.loc[len(pf2)] = [
-            account, addr["num"], addr["voie"],
-            addr["cp"], addr["ville"], addr["pays"], ""
-        ]
-
-        # PF3
-        pf3.loc[len(pf3)] = [
-            account,
-            "PunchoutAccountAndBranchAssociation",
-            branch,
-            punchout_user_id,
-            sealed_val,
-        ]
-
-        # PF4
-        pf4.loc[len(pf4)] = [
-            branch,
-            branch,
-            punchout_user_id,
-            sealed_val,
-        ]
-
-        # PF5
-        pf5.loc[len(pf5)] = [account, punchout_user_id]
-
-        # PF6 (cXML uniquement)
-        if integration_type == "cXML":
-            pf6.loc[len(pf6)] = [account, domain, identity]
-
-    tables = [pf1, pf2, pf3, pf4, pf5]
-    if integration_type == "cXML":
-        tables.append(pf6)
-    return tables
-
-def create_outlook_draft(att: List[Tuple[str, bytes]],
-                         to_: str, subject: str) -> None:
-    if not IS_OUTLOOK:
-        return
-    outlook = win32.Dispatch("Outlook.Application")
-    mail = outlook.CreateItem(0)  # olMailItem
-    mail.To = to_
-    mail.Subject = subject
-    mail.Body = "Bonjour,\n\nVeuillez trouver les fichiers PF en pièce jointe.\n"
-    for name, data in att:
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=name)
-        tmp.write(data)
-        tmp.close()
-        mail.Attachments.Add(tmp.name)
-    mail.Display()
-
-
-def page_multiconnexion():
-    st.header("📦 Multiconnexion")
-
-    # --- 1) Choix du type d’intégration ---
-    integration_type = st.radio(
-        "Type d’intégration",
-        ["cXML", "OCI"],
-        horizontal=True
-    )
-
-    st.markdown(
-        "Télécharger le modèle, le compléter, puis uploader le fichier.  \n"
-        "Colonnes requises : **Numéro de compte** (7 chiffres), **Raison sociale**, "
-        "**Adresse**, **Code d'agence** (4 chiffres)."
-    )
-
-    # 2) Template vierge ----------------------------------------------------------------
-    with st.expander("📑 Template Multiconnexion.xlsx"):
+    with st.expander("📑 Télécharger le template Multiconnexion"):
         cols_tpl = ["Numéro de compte", "Raison sociale", "Adresse", "Code agence"]
-        buf_tpl = io.BytesIO()
+        buf_tpl  = io.BytesIO()
         pd.DataFrame([{c: "" for c in cols_tpl}]).to_excel(buf_tpl, index=False)
         buf_tpl.seek(0)
-        st.download_button(
-            "📥 Télécharger le template",
-            buf_tpl.getvalue(),
-            file_name="dfrecu_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="multi_template"
-        )
+        st.download_button("📥 Template Excel", buf_tpl.getvalue(),
+                           file_name="dfrecu_template.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           key="multi_template")
 
-    # 3) Fichier source -----------------------------------------------------------------
-    up_file = st.file_uploader(
-        "📄 Déposer Fichier Multiconnexion",
-        type=("csv", "xlsx", "xls")
-    )
+    up_file = st.file_uploader("📄 Fichier Multiconnexion", type=("csv", "xlsx", "xls"))
     if not up_file:
         _render_downloads("multi")
         _render_df("multi")
         st.stop()
 
-    # 4) Paramètres d’en‑tête ------------------------------------------------------------
     col1, col2 = st.columns(2)
-    with col1:
-        entreprise   = st.text_input("🏢 Entreprise").strip()
-    with col2:
-        punchout_user = st.text_input("👤 punchoutUserID")
+    with col1: entreprise    = st.text_input("🏢 Entreprise").strip()
+    with col2: punchout_user = st.text_input("👤 punchoutUserID")
 
-    # Domain & Identity uniquement en mode cXML
+    domain = identity = ""
     if integration_type == "cXML":
         col3, col4 = st.columns(2)
-        with col3:
-            domain = st.selectbox("🌐 Domain", ["NetworkID", "DUNS"])
-        with col4:
-            identity = st.text_input("🆔 Identity")
-    else:
-        domain = ""
-        identity = ""
+        with col3: domain   = st.selectbox("🌐 Domain", ["NetworkID", "DUNS"])
+        with col4: identity = st.text_input("🆔 Identity")
 
-    # Options catalogue perso
-    vm_choice   = st.radio("ViewMasterCatalog", ["True", "False"], horizontal=True)
-    pc_enabled  = st.radio("Personal Catalogue ?", ["True", "False"], horizontal=True)
-    pc_name     = st.text_input(
-        "Nom du catalogue (sans PC_)",
-        placeholder="CATALOGUE"
-    ).strip() if pc_enabled == "True" else ""
+    col5, col6 = st.columns(2)
+    with col5: vm_choice  = st.radio("ViewMasterCatalog", ["True", "False"], horizontal=True)
+    with col6: pc_enabled = st.radio("Personal Catalogue ?", ["True", "False"], horizontal=True)
 
-    # 5) Bouton génération ---------------------------------------------------------------
-    if st.button("🚀 Générer les fichiers", key="multi_generate"):
+    pc_name = ""
+    if pc_enabled == "True":
+        pc_name = st.text_input("Nom du catalogue (sans PC_)", placeholder="CATALOGUE").strip()
 
-        # Champs requis selon le mode
-        base_required = [entreprise, punchout_user, (pc_enabled == "False" or pc_name)]
-        cx_required   = [domain, identity] if integration_type == "cXML" else []
-        if not all(base_required + cx_required):
-            st.warning("Remplir tous les champs requis.")
+    if st.button("🚀 Générer les fichiers", key="multi_generate"):
+        base_ok = all([entreprise, punchout_user, (pc_enabled == "False" or bool(pc_name))])
+        cx_ok   = all([domain, identity]) if integration_type == "cXML" else True
+        if not (base_ok and cx_ok):
+            st.warning("Remplissez tous les champs requis.")
             st.stop()
 
-        # --- Lecture + normalisation colonnes ---
-        df_src = read_any(up_file)
+        try:
+            df_src = read_any(up_file)
+        except Exception as e:
+            st.error(f"Lecture impossible : {e}")
+            st.stop()
 
-        # tolérance casse / espaces
-               # --- tolérance casse / espaces ---
-        norm_map = {c: c.strip().lower() for c in df_src.columns}
-        expected = {
-            "Numéro de compte": "numéro de compte",
-            "Code agence":      "code agence",
+        CANONICAL = {
+            "numéro de compte": "Numéro de compte", "code agence":    "Code agence",
+            "raison sociale":   "Raison sociale",    "adresse":        "Adresse",
         }
-        missing = [orig for orig, norm in expected.items() if norm not in norm_map.values()]
+        norm_map = {c: c.strip().lower() for c in df_src.columns}
+        missing  = [CANONICAL[lc] for lc in CANONICAL if lc not in norm_map.values()]
         if missing:
-            st.error(f"Colonnes manquantes ou mal orthographiées : {', '.join(missing)}")
+            st.error(f"Colonnes manquantes : {', '.join(missing)}")
             st.stop()
 
-        # Renomme pour avoir exactement les libellés attendus ensuite
-        for orig, norm in norm_map.items():
-            if norm == "numéro de compte":
-                df_src.rename(columns={orig: "Numéro de compte"}, inplace=True)
-            elif norm == "code agence":
-                df_src.rename(columns={orig: "Code agence"}, inplace=True)
+        rename = {orig: CANONICAL[norm] for orig, norm in norm_map.items() if norm in CANONICAL}
+        df_src.rename(columns=rename, inplace=True)
 
-
-        # --- Contrôles format compte / branche ---
-                df_src["Numéro de compte"], bad_acc = sanitize_numeric(df_src["Numéro de compte"], 7)
+        df_src["Numéro de compte"], bad_acc = sanitize_numeric(df_src["Numéro de compte"], 7)
         df_src["Code agence"],      bad_ag  = sanitize_numeric(df_src["Code agence"], 4)
-
-        if bad_acc.any() or bad_ag.any():
-            st.error("Numéro de compte ou Code agence invalide(s).")
+        if bad_acc.any():
+            st.error(f"{bad_acc.sum()} Numéro(s) de compte invalide(s).")
+            st.dataframe(df_src.loc[bad_acc, "Numéro de compte"].to_frame(), use_container_width=True)
+            st.stop()
+        if bad_ag.any():
+            st.error(f"{bad_ag.sum()} Code(s) agence invalide(s).")
+            st.dataframe(df_src.loc[bad_ag, "Code agence"].to_frame(), use_container_width=True)
             st.stop()
 
-        # --- Construction des tables PF ---
-        tables = build_tables(
-            df_src,
-            entreprise=entreprise,
-            view_master_catalog=vm_choice,
-            punchout_user_id=punchout_user,
-            domain=domain,
-            identity=identity,
-            integration_type=integration_type,
-        )
+        with st.spinner("Construction des tables PF…"):
+            try:
+                tables = multiconnexion_service.build_tables(
+                    df_src, entreprise=entreprise, view_master_catalog=vm_choice,
+                    punchout_user_id=punchout_user, domain=domain, identity=identity,
+                    integration_type=integration_type,
+                )
+            except ValueError as e:
+                st.error(str(e))
+                st.stop()
 
-        # --- Export XLSX + boutons ---
+        labels   = ["PF1", "PF2", "PF3", "PF4", "PF5"] + (["PF6"] if integration_type == "cXML" else [])
         file_map = {
             "PF1": f"B2B Units creation_{entreprise}.xlsx",
             "PF2": f"Table_chargement_adresse_{entreprise}.xlsx",
@@ -775,266 +589,152 @@ def page_multiconnexion():
             "PF5": f"Table_Attach_B2BUnitstoUsers_{entreprise}.xlsx",
             "PF6": f"PunchoutAccountSetup_{entreprise}.xlsx",
         }
-        labels = ["PF1", "PF2", "PF3", "PF4", "PF5"] + (
-            ["PF6"] if integration_type == "cXML" else []
-        )
-
+        XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         for lbl, df in zip(labels, tables):
-            data = to_xlsx(df)
-            _save_file(
-                "multi",
-                f"⬇️ {lbl}",
-                data,
-                file_map[lbl],
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        _save_df("multi", tables[0])
+            _repo.save_file("multi", file_map[lbl], to_xlsx(df), XLSX_MIME, f"⬇️ {lbl}")
+        _repo.save_dataframe("multi", "result", tables[0])
+        st.success(f"✓ {len(labels)} fichiers générés pour {len(df_src):,} comptes")
 
     _render_downloads("multi")
     _render_df("multi")
 
-    # 6) Option Outlook ------------------------------------------------------------------
-    if IS_OUTLOOK and st.session_state.get("multi_files"):
+    if IS_OUTLOOK and _repo.list_files("multi"):
         st.markdown("---")
         dest = st.text_input("Destinataire (Outlook)")
         if st.button("Ouvrir un brouillon Outlook", key="multi_outlook"):
-            subj = f"Fichiers PF – {entreprise} ({datetime.now():%Y-%m-%d %H:%M})"
-            files_att = [
-                (info["filename"], info["data"]) for info in st.session_state["multi_files"]
-            ]
-            create_outlook_draft(files_att, to_=dest, subject=subj)
+            files_att = [(i["filename"], i["data"])
+                         for i in _repo.list_files("multi").values()]
+            _create_outlook_draft(files_att, to_=dest,
+                                  subject=f"Fichiers PF – {entreprise} ({datetime.now():%Y-%m-%d %H:%M})")
             st.success("Brouillon Outlook ouvert.")
     elif not IS_OUTLOOK:
-        st.info("Automatisation Outlook indisponible sur cet environnement.")
-
-# ═══════════════════ PAGE 4 – GÉNÉRATEUR PC / MàJ M2 (AFRX ajouté) ═══════════════════
-
-def generator_pc_common(codes: pd.Series, entreprise: str, statut: str) -> pd.DataFrame:
-    return pd.DataFrame({
-        0: [f"PC_PROFILE_{entreprise}"] * len(codes),
-        1: [statut] * len(codes),
-        2: [None] * len(codes),
-        3: [f"M2_{c}" for c in codes],
-        4: ["frxProductCatalog:Online"] * len(codes),
-    }).drop_duplicates()
+        st.caption("ℹ️ Automatisation Outlook non disponible sur cet environnement.")
 
 
-def export_pc_files(section: str, df1: pd.DataFrame,
-                    comptes: pd.Series,
-                    entreprise: str,
-                    dstr: str = TODAY) -> None:
-    """Crée les 4 entrepôts dans le state et donc les boutons persistants."""
+def page_dfrx_pc() -> None:
+    page_header("🗂️ Personal Catalogue",
+                "Génère DFRXHYBRPCP, DFRXHYBRCMP et les ACK associés")
+    nav = st.radio("Mode", ["Sans mise à jour Mach_2", "Avec mise à jour Mach_2"], horizontal=True)
+    st.markdown("---")
+    if nav == "Sans mise à jour Mach_2":
+        _generator_pc()
+    else:
+        _generator_maj_m2()
 
-    # 1‑ profil PC
-    _save_file(section, "⬇️ DFRXHYBRPCP",
-               df1.to_csv(sep=";", index=False, header=False),
-               f"DFRXHYBRPCP{dstr}0000", "text/plain")
 
-    # 2‑ ACK CMP
-    ack_cmp = (
-        f"DFRXHYBRCMP{dstr}000068240530IT"
-        f"DFRXHYBRCMP{dstr}CCMGHYBFRX                    OK000000"
-    )
-    _save_file(section, "⬇️ AFRXHYBRCMP",
-               ack_cmp,
-               f"AFRXHYBRCMP{dstr}0000.txt", "text/plain")
+def _generator_pc() -> None:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        codes_file = st.file_uploader("📄 Fichier codes Mach_2", type=("csv", "xlsx", "xls"), key="pc_codes")
+        if codes_file: _preview_file(codes_file)
+    with col_b:
+        compte_file = st.file_uploader("📄 Fichier numéros de compte", type=("csv", "xlsx", "xls"), key="pc_comptes")
+        if compte_file: _preview_file(compte_file)
 
-    # 3‑ rattachement comptes → profil
-    cmp_content = (
-        f"PC_{entreprise};PC_{entreprise};PC_PROFILE_{entreprise};"
-        f"{','.join(comptes)};frxProductCatalog:Online"
-    )
-    _save_file(section, "⬇️ DFRXHYBRCMP",
-               cmp_content,
-               f"DFRXHYBRCMP{dstr}0000", "text/plain")
+    if not (codes_file and compte_file):
+        _render_downloads("gen_pc")
+        _render_df("gen_pc")
+        return
 
-    # 4‑ ACK PCP
-    ack_pcp = (
-        f"DFRXHYBRPCP{dstr}000068200117IT"
-        f"DFRXHYBRPCP{dstr}RCMRHYBFRX                    OK000000"
-    )
-    _save_file(section, "⬇️ AFRXHYBRPCP",
-               ack_pcp,
-               f"AFRXHYBRPCP{dstr}0000.txt", "text/plain")
+    df_codes_meta = read_any(codes_file)
+    df_comp_meta  = read_any(compte_file)
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: ci = st.number_input("Colonne codes M2", 1, len(df_codes_meta.columns), 1, key="gpc_ci")
+    with col2: cc = st.number_input("Colonne comptes",  1, len(df_comp_meta.columns),  1, key="gpc_cc")
+    with col3: entreprise = st.text_input("🏢 Entreprise", key="gpc_ent")
+    with col4: statut = st.selectbox("📌 Statut", ["", "INCLUDE", "EXCLUDE"], key="gpc_stat")
 
-# ─────────────────────────  GÉNÉRATEUR PC  ─────────────────────────
-
-def generator_pc():
-    st.subheader("Personal Catalogue")
-
-    # ⬇️ ancien : "📄 Codes produit"
-    codes_file = st.file_uploader(
-        "📄 Fichier contenant la colonne Mach_2 (CSV / Excel)",
-        type=("csv", "xlsx", "xls"),
-        key="pc_codes",
-    )
-    if codes_file:
-        df_codes_tmp = read_any(codes_file)
-        with st.expander("Aperçu – codes produit"):
-            st.dataframe(df_codes_tmp.head())
-            st.write("Index colonnes :", [f"{i+1} – {c}" for i, c in enumerate(df_codes_tmp.columns)])
-
-    compte_file = st.file_uploader(
-        "📄 Déposer le Fichier des numéros de compte (CSV / Excel)",
-        type=("csv", "xlsx", "xls"),
-        key="pc_comptes",
-    )
-    if compte_file:
-        df_comptes_tmp = read_any(compte_file)
-        with st.expander("Aperçu – numéros de compte"):
-            st.dataframe(df_comptes_tmp.head())
-            st.write("Index colonnes :", [f"{i+1} – {c}" for i, c in enumerate(df_comptes_tmp.columns)])
-
-    if codes_file and compte_file:
-        nb_cols_codes = len(read_any(codes_file).columns)
-        nb_cols_comp  = len(read_any(compte_file).columns)
-
-        col_idx_codes = st.number_input("🔢 Colonne contenant les codes M2", 1, nb_cols_codes, 1)
-        col_idx_comptes = st.number_input("🔢 Colonne contenant les numéros de compte", 1, nb_cols_comp, 1)
-
-        entreprise = st.text_input("🏢 Entreprise")
-        statut     = st.selectbox("📌 Statut", ["", "INCLUDE", "EXCLUDE"])
-
-        if st.button("🚀 Générer PC", key="gen_pc_generate"):
-            if not all([entreprise, statut]):
-                st.warning("Renseigner l’entreprise et le statut.")
-                st.stop()
-
-            df_codes   = read_any(codes_file)
-            df_comptes = read_any(compte_file)
-
-            try:
-                raw_codes = df_codes.iloc[:, col_idx_codes - 1].dropna().astype(str).str.strip()
-                comptes   = df_comptes.iloc[:, col_idx_comptes - 1].dropna().astype(str).str.strip()
-            except IndexError:
-                st.error("Indice de colonne hors plage.")
-                st.stop()
-
-            sanitized = raw_codes.apply(sanitize_code)
-            invalid_mask = sanitized.isna()
-
-            if invalid_mask.any():
-                st.error(f"{invalid_mask.sum()} code(s) M2 invalides – uniquement 5 ou 6 chiffres.")
-                st.dataframe(raw_codes[invalid_mask].to_frame("Code fourni"))
-                st.stop()
-
-            codes = sanitized
-            dstr  = TODAY
-
-            df1 = generator_pc_common(codes, entreprise, statut)
-            _save_df("gen_pc", df1)
-            export_pc_files("gen_pc", df1, comptes, entreprise, dstr)
+    if st.button("🚀 Générer PC", key="gen_pc_generate"):
+        if not all([entreprise, statut]):
+            st.warning("Renseignez l'entreprise et le statut.")
+            st.stop()
+        df_codes   = read_any(codes_file)
+        df_comptes = read_any(compte_file)
+        raw_codes  = df_codes.iloc[:, ci-1].dropna().astype(str).str.strip()
+        comptes    = df_comptes.iloc[:, cc-1].dropna().astype(str).str.strip()
+        sanitized  = raw_codes.apply(sanitize_code)
+        if sanitized.isna().any():
+            st.error(f"{sanitized.isna().sum()} code(s) M2 invalide(s).")
+            st.dataframe(raw_codes[sanitized.isna()].to_frame("Code fourni"), use_container_width=True)
+            st.stop()
+        with st.spinner("Génération…"):
+            dstr    = _today()
+            df1     = pc_service.build_pc_profile(sanitized, entreprise, statut)
+            files   = pc_service.build_pc_files_data(df1, comptes, entreprise, dstr)
+        _repo.save_dataframe("gen_pc", "result", df1)
+        _repo.save_files_dict("gen_pc", files)
+        st.success(f"✓ {len(df1):,} codes · {len(comptes):,} comptes")
 
     _render_downloads("gen_pc")
     _render_df("gen_pc")
 
-# ─────────────────────────  MISE À JOUR M2 (avant génération PC) ─────────────────────────
 
-def generator_maj_m2():
-    st.subheader("Mise à jour Mach_2 avant génération")
+def _generator_maj_m2() -> None:
+    col_a, col_b, col_c = st.columns(3)
+    with col_a: codes_file  = st.file_uploader("📄 Fichier codes Mach_2",    type=("csv","xlsx","xls"), key="maj_codes")
+    with col_b: compte_file = st.file_uploader("📄 Fichier numéros de compte",type=("csv","xlsx","xls"), key="maj_comp")
+    with col_c: map_file    = st.file_uploader("📄 Fichier M2_MisAJour",      type=("csv","xlsx","xls"), key="maj_map")
 
-    # ⬇️ ancien : "📄 Codes produit"
-    codes_file = st.file_uploader(
-        "📄 Fichier contenant la colonne Mach_2 (CSV / Excel)",
-        type=("csv", "xlsx", "xls"))
-    col_idx_codes = st.number_input("🔢 Colonne Codes Mach_2", 1, 50, 1) if codes_file else None
+    if not (codes_file and compte_file and map_file):
+        st.info("Chargez les 3 fichiers pour continuer.")
+        _render_downloads("majm2")
+        return
 
-    compte_file = st.file_uploader("📄 Numéros de compte", type=("csv", "xlsx", "xls"))
-    col_idx_comptes = st.number_input("🔢 Colonne comptes (1=A)", 1, 50, 1) if compte_file else None
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: ci_codes = st.number_input("Colonne M2",        1, 50, 1, key="maj_ci")
+    with col2: ci_comp  = st.number_input("Colonne comptes",   1, 50, 1, key="maj_cc")
+    with col3: ci_old   = st.number_input("Colonne M2 ancien", 1, 50, 1, key="maj_old")
+    with col4: ci_new   = st.number_input("Colonne M2 nouveau",1, 50, 2, key="maj_new")
+    col5, col6 = st.columns(2)
+    with col5: entreprise = st.text_input("🏢 Entreprise", key="maj_ent")
+    with col6: statut = st.selectbox("📌 Statut", ["", "INCLUDE", "EXCLUDE"], key="maj_stat")
 
-    map_file = st.file_uploader("📄 Fichier Mach_2_MisAJour", type=("csv", "xlsx", "xls"))
-    if map_file:
-        col_idx_old = st.number_input("🔢 Colonne M2 ancien", 1, 50, 1)
-        col_idx_new = st.number_input("🔢 Colonne M2 nouveau", 1, 50, 2)
-    else:
-        col_idx_old = col_idx_new = None
-
-    entreprise = st.text_input("🏢 Entreprise")
-    statut     = st.selectbox("📌 Statut", ["", "INCLUDE", "EXCLUDE"])
-
-    if st.button("🚀 Générer MàJ", key="majm2_generate"):
-        required = [codes_file, compte_file, map_file, entreprise, statut,
-                    col_idx_codes, col_idx_comptes, col_idx_old, col_idx_new]
-        if not all(required):
-            st.warning("Remplir tous les champs et joins les 3 fichiers.")
+    if st.button("🚀 Générer MàJ", key="majm2_generate"):
+        if not all([entreprise, statut]):
+            st.warning("Renseignez l'entreprise et le statut.")
             st.stop()
-
         df_codes   = read_any(codes_file)
         df_comptes = read_any(compte_file)
         df_map     = read_any(map_file)
-
-        try:
-            raw_codes = df_codes.iloc[:, col_idx_codes-1].dropna().astype(str).str.strip()
-            comptes   = df_comptes.iloc[:, col_idx_comptes-1].dropna().astype(str).str.strip()
-        except IndexError:
-            st.error("Indice colonne hors plage.")
-            st.stop()
-
-        sanitized = raw_codes.apply(sanitize_code)
+        raw_codes  = df_codes.iloc[:, ci_codes-1].dropna().astype(str).str.strip()
+        comptes    = df_comptes.iloc[:, ci_comp-1].dropna().astype(str).str.strip()
+        sanitized  = raw_codes.apply(sanitize_code)
         if sanitized.isna().any():
             st.error("Codes M2 invalides détectés.")
-            st.dataframe(raw_codes[sanitized.isna()].to_frame("Code fourni"))
+            st.dataframe(raw_codes[sanitized.isna()].to_frame("Code fourni"), use_container_width=True)
             st.stop()
-
-        try:
-            old_codes = df_map.iloc[:, col_idx_old-1].astype(str).apply(sanitize_code)
-            new_codes = df_map.iloc[:, col_idx_new-1].astype(str).apply(sanitize_code)
-        except IndexError:
-            st.error("Indice colonne mapping hors plage.")
-            st.stop()
-
-        mapping = (pd.DataFrame({"old": old_codes, "new": new_codes})
-                   .dropna()
-                   .drop_duplicates("old")
-                   .set_index("old")["new"].to_dict())
-
-        updated_codes = sanitized.map(lambda c: mapping.get(c, c))
-
-        dstr = TODAY
-        df1 = generator_pc_common(updated_codes, entreprise, statut)
-        _save_df("majm2", df1)
-        export_pc_files("majm2", df1, comptes, entreprise, dstr)
+        old_codes = df_map.iloc[:, ci_old-1].astype(str).apply(sanitize_code)
+        new_codes = df_map.iloc[:, ci_new-1].astype(str).apply(sanitize_code)
+        mapping   = (pd.DataFrame({"old": old_codes, "new": new_codes})
+                     .dropna().drop_duplicates("old").set_index("old")["new"].to_dict())
+        updated = sanitized.map(lambda c: mapping.get(c, c))
+        with st.spinner("Génération…"):
+            dstr  = _today()
+            df1   = pc_service.build_pc_profile(updated, entreprise, statut)
+            files = pc_service.build_pc_files_data(df1, comptes, entreprise, dstr)
+        _repo.save_dataframe("majm2", "result", df1)
+        _repo.save_files_dict("majm2", files)
+        st.success(f"✓ {len(df1):,} codes · {len(mapping):,} substitutions appliquées")
 
     _render_downloads("majm2")
     _render_df("majm2")
 
 
-# ───────── page_dfrx_pc : navigation corrigée ─────────
-def page_dfrx_pc():
-    st.header("🛠️ Personal Catalogue")
-    nav = st.radio(
-        "Choisir l’outil",
-        ["Sans mise à jour Mach_2", "Avec mise à jour Mach_2"],
-        horizontal=True
-    )
+def page_cpn() -> None:
+    page_header("📑 CPN",
+                "Génère DFRXHYBCPNA — produit cartésien Référence interne × Numéros de compte")
 
-    if nav == "Sans mise à jour Mach_2":
-        generator_pc()
-    else:
-        generator_maj_m2()
+    MAX_ROWS = 500_000
 
-# ═══════════════════ PAGE 5 – CPN GENERATOR ═══════════════════
-def page_cpn():
-    st.header("📑 CPN")
-
-    colA, colB = st.columns(2)
-
-    # ─── Upload fichiers ───
-    with colA:
-        main_file = st.file_uploader(
-            "📄 Appairage Code produit client / Référence interne",
-            type=("csv", "xlsx", "xls")
-        )
-        if main_file:
-            _preview_file(main_file)
-
-    with colB:
-        cli_file = st.file_uploader(
-            "📄 Périmètre (comptes client)",
-            type=("csv", "xlsx", "xls")
-        )
-        if cli_file:
-            _preview_file(cli_file)
+    col_a, col_b = st.columns(2)
+    with col_a:
+        main_file = st.file_uploader("📄 Appairage Code produit / Référence interne",
+                                     type=("csv","xlsx","xls"), key="cpn_main")
+        if main_file: _preview_file(main_file)
+    with col_b:
+        cli_file = st.file_uploader("📄 Périmètre (numéros de compte)",
+                                    type=("csv","xlsx","xls"), key="cpn_cli")
+        if cli_file: _preview_file(cli_file)
 
     if not (main_file and cli_file):
         _render_downloads("cpn")
@@ -1044,89 +744,95 @@ def page_cpn():
     df_main = read_any(main_file)
     df_cli  = read_any(cli_file)
 
-    # ─── Choix des colonnes ───
-    col_int = st.selectbox(
-        "Colonne Référence produit interne",
-        range(1, len(df_main.columns) + 1),
-        index=0
-    )
-    col_cli_prod = st.selectbox(
-        "Colonne Code produit client",
-        range(1, len(df_main.columns) + 1),
-        index=1 if len(df_main.columns) > 1 else 0
-    )
-    col_cli_acc = st.selectbox(
-        "Colonne Numéro de compte client (périmètre)",
-        range(1, len(df_cli.columns) + 1),
-        index=0
-    )
+    col1, col2, col3 = st.columns(3)
+    with col1: col_int      = st.selectbox("Référence interne (8 chiffres)",
+                                           range(1, len(df_main.columns)+1), index=0, key="cpn_ci")
+    with col2: col_cli_prod = st.selectbox("Code produit client",
+                                           range(1, len(df_main.columns)+1),
+                                           index=min(1, len(df_main.columns)-1), key="cpn_cp")
+    with col3: col_cli_acc  = st.selectbox("Numéro de compte (périmètre)",
+                                           range(1, len(df_cli.columns)+1), index=0, key="cpn_ca")
 
-    # ─── Génération ───
-        # ─── Génération ───
-    if st.button("🚀 Générer CPN", key="cpn_generate"):
-        series_int = df_main.iloc[:, col_int - 1].astype(str).str.strip()
-        if (~series_int.str.fullmatch(r"\d{8}")).any():
-            st.error("Réf. interne invalide : doit contenir exactement 8 chiffres.")
-            st.dataframe(series_int[~series_int.str.fullmatch(r'\d{8}')])
+    n_prod  = len(df_main.iloc[:, col_int-1].dropna())
+    n_acc   = len(df_cli.iloc[:, col_cli_acc-1].dropna())
+    n_total = n_prod * n_acc
+    st.caption(f"📐 Produit cartésien estimé : **{n_total:,}** lignes ({n_prod} produits × {n_acc} comptes)")
+    if n_total > MAX_ROWS:
+        st.warning(f"⚠️ Volume trop grand ({n_total:,} > {MAX_ROWS:,} max). Réduisez le périmètre.")
+
+    if st.button("🚀 Générer CPN", key="cpn_generate", disabled=(n_total > MAX_ROWS)):
+        series_int      = df_main.iloc[:, col_int-1].astype(str).str.strip().reset_index(drop=True)
+        series_cli_prod = df_main.iloc[:, col_cli_prod-1].astype(str).str.strip().reset_index(drop=True)
+        series_cli_acc  = df_cli.iloc[:,  col_cli_acc-1].astype(str).str.strip().reset_index(drop=True)
+
+        invalid = ~series_int.str.fullmatch(r"\d{8}")
+        if invalid.any():
+            st.error(f"{invalid.sum()} référence(s) invalide(s) — 8 chiffres attendus.")
+            st.dataframe(series_int[invalid].to_frame("Référence"), use_container_width=True)
             st.stop()
 
-        series_cli_prod = df_main.iloc[:, col_cli_prod - 1].astype(str).str.strip()
-        series_cli_acc  = df_cli.iloc[:,  col_cli_acc  - 1].astype(str).str.strip()
+        with st.spinner(f"Calcul du produit cartésien ({n_total:,} lignes)…"):
+            df_out = cpn_service.build_cpn(series_int, series_cli_prod, series_cli_acc)
 
-        # Produit cartésien InternalItemID × AccountNumber
-        pf = pd.DataFrame(
-            product(series_int, series_cli_acc),
-            columns=["InternalItemID", "AccountNumber"]
-        )
-        pf["CustomerItemId"] = series_cli_prod.repeat(len(series_cli_acc)).values
+        dstr = _today()
+        _repo.save_dataframe("cpn", "result", df_out)
+        _repo.save_file("cpn", f"DFRXHYBCPNA{dstr}0000",
+                        df_out.to_csv(sep="\t", index=False, header=False).encode(),
+                        "text/tab-separated-values", "⬇️ DFRX (TSV)")
+        _repo.save_file("cpn", f"AFRXHYBCPNA{dstr}0000",
+                        cpn_service.build_cpn_ack(dstr).encode(),
+                        "text/plain", "⬇️ AFRX (TXT)")
+        st.success(f"✓ {len(df_out):,} lignes générées")
 
-        # Ré‑ordonnage final (sans colonne vide)
-        df_out = pf[["CustomerItemId", "AccountNumber", "InternalItemID"]]
-
-        # Nomenclature fichiers
-        today     = TODAY
-        dfrx_name = f"DFRXHYBCPNA{today}0000"
-        afrx_name = f"AFRXHYBCPNA{today}0000"
-
-        ack_txt = (
-            f"DFRXHYBCPNA{today}000148250201IT"
-            f"DFRXHYBCPNA{today}CPNAHYBFRX                    OK000000"
-        )
-
-        # Sauvegarde & téléchargements
-        _save_df("cpn", df_out)
-        _save_file(
-            "cpn",
-            "⬇️ DFRX (TSV)",
-            df_out.to_csv(sep="\t", index=False, header=False).encode(),
-            dfrx_name,
-            "text/tab-separated-values"
-        )
-        _save_file("cpn", "⬇️ AFRX (TXT)", ack_txt, afrx_name, "text/plain")
+    _render_downloads("cpn")
+    _render_df("cpn")
 
 
+# ── Outlook helper (Windows uniquement) ──────────────────────────────────────
+def _create_outlook_draft(att: List[Tuple[str, bytes]], to_: str, subject: str) -> None:
+    if not IS_OUTLOOK:
+        return
+    outlook = win32.Dispatch("Outlook.Application")
+    mail = outlook.CreateItem(0)
+    mail.To, mail.Subject = to_, subject
+    mail.Body = "Bonjour,\n\nVeuillez trouver les fichiers PF en pièce jointe.\n"
+    for name, data in att:
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=name)
+        tmp.write(data)
+        tmp.close()
+        mail.Attachments.Add(tmp.name)
+    mail.Display()
 
-# ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
-# ═══════════════════════════  MENU PRINCIPAL ═══════════════════════════
+
+# ══ NAVIGATION ════════════════════════════════════════════════════════════════
+
 PAGES = {
-    "Mise à jour Mach_2": page_update_m2,
-    "Classification Code": page_classification,
-    "Multiconnexion": page_multiconnexion,
-    "Personal Catalogue": page_dfrx_pc,
-    "CPN": page_cpn,
+    "🏠 Dashboard":        page_dashboard,
+    "Mise à jour Mach_2":  page_update_m2,
+    "Classification Code": page_classification,
+    "Multiconnexion":      page_multiconnexion,
+    "Personal Catalogue":  page_dfrx_pc,
+    "CPN":                 page_cpn,
 }
 
-with st.sidebar:
-    # ▸ Bouton global de réinitialisation
-    if st.button("🔄 Réinitialiser la page", key="reset_page_button"):
-        reset_page()
-        st.rerun()
+_inject_css()
 
-    # ▸ Menu de navigation principal
+with st.sidebar:
+    st.markdown("""
+    <div class="sidebar-logo">
+        <div class="sidebar-logo-icon">R</div>
+        <div>
+            <p class="sidebar-logo-title">Rexel</p>
+            <p class="sidebar-logo-sub">Multi-Outils B2B</p>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    if st.button("🔄 Réinitialiser", key="reset_btn"):
+        reset_page()
+
     choice = st.radio(
-        "Navigation", list(PAGES), index=0, key="nav_main",
-        label_visibility="collapsed",
+        "Navigation", list(PAGES), index=0,
+        key="nav_main", label_visibility="collapsed",
     )
 
-# — exécution de la page choisie —
 PAGES[choice]()
